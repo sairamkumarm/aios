@@ -1,0 +1,113 @@
+{
+    "task_management": [
+      {
+        "name": "add_task",
+        "params": [
+          {
+            "param_name": "description",
+            "param_type": "string",
+            "param_note": "The details of the task to add. Example: 'Buy groceries'."
+          },
+          {
+            "param_name": "due",
+            "param_type": "date",
+            "param_note": "Optional due date for the task. Example: 'due:tomorrow' or 'due:2025-01-22T13:00:00Z'. if no due date is specified assume today, also round timings like evening to 6pm etc and if time and date specified convert to time format shown earlier"
+          }
+        ]
+      },
+      {
+        "name": "modify_task",
+        "params": [
+          {
+            "param_name": "task_id",
+            "param_type": "string",
+            "param_note": "Unique identifier of the task to modify. Example: 'task 1'."
+          },
+          {
+            "param_name": "attribute",
+            "param_type": "string",
+            "param_note": "The attribute to change (e.g., priority, due date). Example: 'priority:H' or 'due:2025-01-25'."
+          },
+          {
+            "param_name": "value",
+            "param_type": "string",
+            "param_note": "New value for the specified attribute. Example: 'priority:M'."
+          }
+        ]
+      },
+      {
+        "name": "delete_task",
+        "params": [
+          {
+            "param_name": "task_id",
+            "param_type": "string",
+            "param_note": "Unique identifier of the task to delete. Example: 'task 3'."
+          }
+        ]
+      },
+      {
+        "name": "complete_task",
+        "params": [
+          {
+            "param_name": "task_id",
+            "param_type": "string",
+            "param_note": "Unique identifier of the task to mark as completed. Example: 'task 5'."
+          }
+        ]
+      },
+      {
+        "name": "list_open_tasks",
+        "params": []
+      },
+      {
+        "name": "list_open_tasks_by_due",
+        "params": [
+          {
+            "param_name": "due",
+            "param_type": "string",
+            "param_note": "List open tasks, filtering within due date. Example: 'due:eow' end of week (also used for this week), also due:now, due:today, due:2013-03-14T22:30:00Z(infer time as default 23:59:59Z) etc."
+          }
+        ]
+      },
+      {
+        "name": "start_task",
+        "params": [
+          {
+            "param_name": "task_id",
+            "param_type": "string",
+            "param_note": "Unique identifier of the task to mark as active. Example: 'task 4'."
+          }
+        ]
+      },
+      {
+        "name": "stop_task",
+        "params": [
+          {
+            "param_name": "task_id",
+            "param_type": "string",
+            "param_note": "Unique identifier of the task to mark as inactive. Example: 'task 6'."
+          }
+        ]
+      },
+      {
+        "name": "view_task_summary",
+        "params": []
+      },
+      {
+        "name": "export_tasks",
+        "params": [
+          {
+            "param_name": "file_format",
+            "param_type": "string",
+            "param_note": "The format to export tasks in. Example: 'JSON'."
+          },
+          {
+            "param_name": "destination",
+            "param_type": "string",
+            "param_note": "Path to save the exported file. Example: '/path/to/exported_tasks.json'."
+          }
+        ]
+      }
+    ]
+  }
+  
