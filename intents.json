@@ -227,5 +227,62 @@
       }
     ]
   }
-]
+  ],
+  "notes": [
+  {
+    "name": "list_notes",
+    "params": []
+  },
+  {
+    "name": "add_note",
+    "params": [
+      {
+        "param_name": "title",
+        "param_type": "string",
+        "param_note": "'title': The unique title for the note. Example: 'Shopping List'."
+      },
+      {
+        "param_name": "content",
+        "param_type": "string",
+        "param_note": "'content': The text content to include in the note. Example: 'Buy milk and eggs.'"
+      }
+    ]
+  },
+  {
+    "name": "append_to_note",
+    "params": [
+      {
+        "param_name": "title",
+        "param_type": "string",
+        "param_note": "'title': The title of the existing note to append to. Example: 'Shopping List'."
+      },
+      {
+        "param_name": "content",
+        "param_type": "string",
+        "param_note": "'content': The text content to append to the note. Example: 'Add bread to the list.'"
+      }
+    ]
+  },
+  {
+    "name": "delete_note",
+    "params": [
+      {
+        "param_name": "title",
+        "param_type": "string",
+        "param_note": "'title': The title of the note to delete. Example: 'Shopping List'."
+      }
+    ]
+  },
+  {
+    "name": "read_note",
+    "params": [
+      {
+        "param_name": "title",
+        "param_type": "string",
+        "param_note": "'title': The title of the note to read. Example: 'Shopping List'."
+      }
+    ]
+  }
+  ]
+
 }
