@@ -198,12 +198,12 @@
       {
         "param_name": "time",
         "param_type": "string",
-        "param_note": "'time': The time at which the alarm should be triggered. Example: '14:30'. This should follow the format 'HH:MM', where 'HH' is the hour (00-23) and 'MM' is the minute (00-59)."
+        "param_note": "'time': The time at which the alarm should be triggered. Example: '14:30'. This should follow the format 'HH:MM', where 'HH' is the hour (00-23) and 'MM' is the minute (00-59). If user gives you any vague value like afternoon or morning or something along those likes, pick a time and preoutput and ask the user for confirmation, when you have confirmation you fill the output in the proper format by inference"
       },
       {
         "param_name": "date",
         "param_type": "string",
-        "param_note": "The specific date when the alarm should trigger. Example: '012525'. This should follow the format 'MMDDYY', where 'MM' is the month (01-12), 'DD' is the day (01-31), and 'YY' is the two-digit year (e.g., '25' for 2025)."
+        "param_note": "The specific date when the alarm should trigger. Example: '012525'. This should follow the format 'MMDDYY', where 'MM' is the month (01-12), 'DD' is the day (01-31), and 'YY' is the two-digit year (e.g., '25' for 2025). If the user gives some vague date like tomorrow or day after tomorrow, you have no way of finding out the actual real world date, so just fill the date in the output as tom or day_after_tom dont accept any durations like in 10 minutes or something, there are other detailed_intents for that, make the switch if necessary, remember only tom and day_after_tom are allowed to break the date format nothing else."
       }
     ]
   },

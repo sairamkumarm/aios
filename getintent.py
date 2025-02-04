@@ -14,10 +14,11 @@ try:
         response = chat.send_message(f"{{'type': 'user', 'user': {uinput}, 'intents':{get_main_intents()}}}")
         while True:
             res = response.text.strip('```json').strip('\n```').strip()
-            print(res,end='\n\n')
+            # print(res,end='\n\n')
             jres = json.loads(res)
             if jres["type"] == 'plan':
                 response = chat.send_message("Proceed as you see fit.")
+                print(f"{jres['plan']}")
             elif jres["type"] == 'action':
                 fcn,ipt = jres["function"],jres["input"]
                 if fcn == 'preoutput':
