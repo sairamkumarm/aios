@@ -41,11 +41,14 @@ class notes:
             str: Output from the script execution.
         """
         try:
+            env = os.environ.copy()
+            env["HOME"] = "/Users/tenzintsering"
             result = subprocess.run(
                 [self.script_path] + args,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                env=env
             )
             return result.stdout.strip()
         except Exception as e:
