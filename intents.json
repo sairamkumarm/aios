@@ -4,34 +4,14 @@
       "name": "add_task",
       "params": [
         {
-          "param_name": "description",
+          "param_name": "title",
           "param_type": "string",
-          "param_note": "Details of the task to add. Example: 'Buy groceries'. Keep it concise and specific."
+          "param_note": "Title of the task. Must be unique. Example: 'Submit tax report'."
         },
         {
-          "param_name": "due",
-          "param_type": "date",
-          "param_note": "Optional due date for the task. Example: 'due:tomorrow' or 'due:2025-01-22T13:00:00Z'. Do not mix natural language terms like 'today' with ISO 8601 formatting (e.g., avoid 'todayT23:59:59Z'). If no due date is specified, default to today. For phrases like 'evening', assume 6:00 PM and convert to ISO 8601 if required."
-        }
-      ]
-    },
-    {
-      "name": "modify_task",
-      "params": [
-        {
-          "param_name": "task_id",
+          "param_name": "deadline",
           "param_type": "string",
-          "param_note": "Unique identifier of the task to modify. Example: 'task 1'."
-        },
-        {
-          "param_name": "attribute",
-          "param_type": "string",
-          "param_note": "The attribute to change. Example: 'priority:H' for high priority or 'due:2025-01-25' for a new due date. For due dates, avoid mixing natural language (e.g., 'today') with ISO 8601 formatting."
-        },
-        {
-          "param_name": "value",
-          "param_type": "string",
-          "param_note": "The new value for the specified attribute. Example: 'priority:M' to set medium priority."
+          "param_note": "Optional deadline in ISO 8601 UTC format. Example: '2025-01-22T13:00:00Z'. If omitted, defaults to next-day midnight UTC (e.g., '2025-04-07T00:00:00Z'). Do not combine natural language with ISO formatting (e.g., avoid 'todayT23:59:59Z')."
         }
       ]
     },
@@ -39,53 +19,23 @@
       "name": "delete_task",
       "params": [
         {
-          "param_name": "task_id",
+          "param_name": "title",
           "param_type": "string",
-          "param_note": "Unique identifier of the task to delete. Example: 'task 3'."
+          "param_note": "Exact title of the task to delete. Example: 'Submit tax report'."
         }
       ]
     },
     {
-      "name": "complete_task",
-      "params": [
-        {
-          "param_name": "task_id",
-          "param_type": "string",
-          "param_note": "Unique identifier of the task to mark as completed. Example: 'task 5'."
-        }
-      ]
-    },
-    {
-      "name": "list_open_tasks",
+      "name": "list_tasks",
       "params": []
     },
     {
-      "name": "list_open_tasks_by_due",
+      "name": "read_task",
       "params": [
         {
-          "param_name": "due",
+          "param_name": "title",
           "param_type": "string",
-          "param_note": "Filter open tasks by due date. Example: 'due:eow' (end of week), 'due:now', or 'due:2013-03-14T22:30:00Z'. Do not mix natural language terms (e.g., 'today') with ISO 8601 formatting (e.g., avoid 'todayT23:59:59Z'). If only the date is specified, assume time is 23:59:59Z."
-        }
-      ]
-    },
-    {
-      "name": "start_task",
-      "params": [
-        {
-          "param_name": "task_id",
-          "param_type": "string",
-          "param_note": "Unique identifier of the task to mark as active. Example: 'task 4'."
-        }
-      ]
-    },
-    {
-      "name": "stop_task",
-      "params": [
-        {
-          "param_name": "task_id",
-          "param_type": "string",
-          "param_note": "Unique identifier of the task to mark as inactive. Example: 'task 6'."
+          "param_note": "Exact title of the task to view. Example: 'Submit tax report'."
         }
       ]
     }
@@ -185,104 +135,103 @@
           "param_note": "Used to filter the directory contents based on file types. Specify natural language terms, and these will map to corresponding file extensions, return the mappings like this '.{mappings here}'. Supported mappings include: \n\n- **Images**: .{jpg,jpeg,png,gif,bmp,tiff,webp,svg,heic} \n  - Examples: 'pictures', 'images', 'photos' \n\n- **Videos**: .{mp4,mkv,avi,mov,wmv,flv,webm,mpg,mpeg} \n  - Examples: 'videos', 'movies', 'clips' \n\n- **Documents**: .{pdf,doc,docx,ppt,pptx,xls,xlsx,txt,md,rtf,odt,ods} \n  - Examples: 'documents', 'docs', 'text files', 'spreadsheets', 'presentations' \n\n- **Audio**: .{mp3,wav,flac,aac,ogg,m4a,wma} \n  - Examples: 'audio', 'music', 'songs', 'sound' \n\n- **Archives**: .{zip,rar,tar,gz,7z,iso} \n  - Examples: 'archives', 'compressed files', 'zipped files' \n\n- **Code Files**: .{py,js,html,css,java,c,cpp,cs,ts,php,rb,go,sh,json,yaml,xml} \n  - Examples: 'code', 'scripts', 'programming files' \n\n- **Executables**: .{exe,msi,dmg,app,sh,bat,bin} \n  - Examples: 'applications', 'executables', 'programs' \n\nIf no constraint is provided, this param should be should be '.{*}'(meaning everthing, so technically no constraint), if the user asks specifically for a filetype return that as '.{filetype_extension}'"
         }
       ]
-    }    
+    }
   ],
   "alarms": [
-  {
-    "name": "list_scheduled_alarms",
-    "params": []
-  },
-  {
-    "name": "schedule_alarm_at_time_and_date",
-    "params": [
-      {
-        "param_name": "time",
-        "param_type": "string",
-        "param_note": "'time': The time at which the alarm should be triggered. Example: '14:30'. This should follow the format 'HH:MM', where 'HH' is the hour (00-23) and 'MM' is the minute (00-59). If user gives you any vague value like afternoon or morning or something along those likes, pick a time and preoutput and ask the user for confirmation, when you have confirmation you fill the output in the proper format by inference"
-      },
-      {
-        "param_name": "date",
-        "param_type": "string",
-        "param_note": "The specific date when the alarm should trigger. Example: '012525'. This should follow the format 'MMDDYY', where 'MM' is the month (01-12), 'DD' is the day (01-31), and 'YY' is the two-digit year (e.g., '25' for 2025). If the user gives some vague date like tomorrow or day after tomorrow, you have no way of finding out the actual real world date, so just fill the date in the output as tom or day_after_tom dont accept any durations like in 10 minutes or something, there are other detailed_intents for that, make the switch if necessary, remember only tom and day_after_tom are allowed to break the date format nothing else."
-      }
-    ]
-  },
-  {
-    "name": "schedule_alarm_at_duration_from_now",
-    "params": [
-      {
-        "param_name": "duration",
-        "param_type": "string",
-        "param_note": "Duration from the current time when the alarm should be triggered. Example: '10 minutes'. This should follow the format 'at now + <duration>', where <duration> can be in minutes, hours, or days (e.g., '10 minutes', '2 hours', or '3 days')."
-      }
-    ]
-  },
-  {
-    "name": "remove_scheduled_alarm",
-    "params": [
-      {
-        "param_name": "job_id",
-        "param_type": "string",
-        "param_note": "The job ID of the scheduled alarm to be removed. Example: '3'. You can get the job ID by using the 'atq' command to list the pending jobs."
-      }
-    ]
-  }
+    {
+      "name": "list_scheduled_alarms",
+      "params": []
+    },
+    {
+      "name": "schedule_alarm_at_time_and_date",
+      "params": [
+        {
+          "param_name": "time",
+          "param_type": "string",
+          "param_note": "'time': The time at which the alarm should be triggered. Example: '14:30'. This should follow the format 'HH:MM', where 'HH' is the hour (00-23) and 'MM' is the minute (00-59). If user gives you any vague value like afternoon or morning or something along those likes, pick a time and preoutput and ask the user for confirmation, when you have confirmation you fill the output in the proper format by inference"
+        },
+        {
+          "param_name": "date",
+          "param_type": "string",
+          "param_note": "The specific date when the alarm should trigger. Example: '012525'. This should follow the format 'MMDDYY', where 'MM' is the month (01-12), 'DD' is the day (01-31), and 'YY' is the two-digit year (e.g., '25' for 2025). If the user gives some vague date like tomorrow or day after tomorrow, you have no way of finding out the actual real world date, so just fill the date in the output as tom or day_after_tom dont accept any durations like in 10 minutes or something, there are other detailed_intents for that, make the switch if necessary, remember only tom and day_after_tom are allowed to break the date format nothing else."
+        }
+      ]
+    },
+    {
+      "name": "schedule_alarm_at_duration_from_now",
+      "params": [
+        {
+          "param_name": "duration",
+          "param_type": "string",
+          "param_note": "Duration from the current time when the alarm should be triggered. Example: '10 minutes'. This should follow the format 'at now + <duration>', where <duration> can be in minutes, hours, or days (e.g., '10 minutes', '2 hours', or '3 days')."
+        }
+      ]
+    },
+    {
+      "name": "remove_scheduled_alarm",
+      "params": [
+        {
+          "param_name": "job_id",
+          "param_type": "string",
+          "param_note": "The job ID of the scheduled alarm to be removed. Example: '3'. You can get the job ID by using the 'atq' command to list the pending jobs."
+        }
+      ]
+    }
   ],
   "notes": [
-  {
-    "name": "list_notes",
-    "params": []
-  },
-  {
-    "name": "add_note",
-    "params": [
-      {
-        "param_name": "title",
-        "param_type": "string",
-        "param_note": "'title': The unique title for the note. Example: 'Shopping List'."
-      },
-      {
-        "param_name": "content",
-        "param_type": "string",
-        "param_note": "'content': The text content to include in the note. Example: 'Buy milk and eggs.'"
-      }
-    ]
-  },
-  {
-    "name": "append_to_note",
-    "params": [
-      {
-        "param_name": "title",
-        "param_type": "string",
-        "param_note": "'title': The title of the existing note to append to. Example: 'Shopping List'."
-      },
-      {
-        "param_name": "content",
-        "param_type": "string",
-        "param_note": "'content': The text content to append to the note. Example: 'Add bread to the list.'"
-      }
-    ]
-  },
-  {
-    "name": "delete_note",
-    "params": [
-      {
-        "param_name": "title",
-        "param_type": "string",
-        "param_note": "'title': The title of the note to delete. Example: 'Shopping List'."
-      }
-    ]
-  },
-  {
-    "name": "read_note",
-    "params": [
-      {
-        "param_name": "title",
-        "param_type": "string",
-        "param_note": "'title': The title of the note to read. Example: 'Shopping List'."
-      }
-    ]
-  }
+    {
+      "name": "list_notes",
+      "params": []
+    },
+    {
+      "name": "add_note",
+      "params": [
+        {
+          "param_name": "title",
+          "param_type": "string",
+          "param_note": "'title': The unique title for the note. Example: 'Shopping List'."
+        },
+        {
+          "param_name": "content",
+          "param_type": "string",
+          "param_note": "'content': The text content to include in the note. Example: 'Buy milk and eggs.'"
+        }
+      ]
+    },
+    {
+      "name": "append_to_note",
+      "params": [
+        {
+          "param_name": "title",
+          "param_type": "string",
+          "param_note": "'title': The title of the existing note to append to. Example: 'Shopping List'."
+        },
+        {
+          "param_name": "content",
+          "param_type": "string",
+          "param_note": "'content': The text content to append to the note. Example: 'Add bread to the list.'"
+        }
+      ]
+    },
+    {
+      "name": "delete_note",
+      "params": [
+        {
+          "param_name": "title",
+          "param_type": "string",
+          "param_note": "'title': The title of the note to delete. Example: 'Shopping List'."
+        }
+      ]
+    },
+    {
+      "name": "read_note",
+      "params": [
+        {
+          "param_name": "title",
+          "param_type": "string",
+          "param_note": "'title': The title of the note to read. Example: 'Shopping List'."
+        }
+      ]
+    }
   ]
-
 }

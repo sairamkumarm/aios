@@ -12,7 +12,7 @@ class notes:
         """
         Initialize the notes class.
         """
-        self.script_path = "/usr/local/bin/notes"
+        self.script_path = os.environ.get('NOTES_PATH')
         self.detailed_intent = detailed_intent
     
     def run(self, params: dict):
@@ -41,14 +41,11 @@ class notes:
             str: Output from the script execution.
         """
         try:
-            env = os.environ.copy()
-            env["HOME"] = "/Users/tenzintsering"
             result = subprocess.run(
                 [self.script_path] + args,
                 capture_output=True,
                 text=True,
                 check=False,
-                env=env
             )
             return result.stdout.strip()
         except Exception as e:

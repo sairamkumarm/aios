@@ -2,6 +2,7 @@ import json
 from classes.notes import notes
 from classes.file_manager import file_manager
 from classes.alarm import alarms
+from classes.tasks import tasks
 from datetime import datetime
 
 with open('intents.json','r') as file:
@@ -44,7 +45,19 @@ def get_params_and_context(intents):
             cnxt = f"Error accessing file system: {str(e)}"
     elif main_intent == 'task_management':
         inst = "Given below is the current task list. refer to this and extrapolate the task names to match existing ones. if nothing is even a remote match then use the preoutput to ask the user and give them options if possible. i repeat only move forward with something that is an exact match of the context.\n"
-        cnxt = "ID Age   Description Urg\n1 19s   test 1         0\n2 13s   test 2         0\n3  3s   test 3         0"
+        current_time = datetime.now().astimezone().strftime("%A, %B %d, %Y at %I:%M:%S.%f %p %Z (UTC%z)")
+        try:
+            # Get actual tasks list from the tasks script
+            tasks_instance = tasks("list_tasks")
+            tasks_list = tasks_instance.run({})
+            if tasks_list and not tasks_list.startswith("Error"):
+                cnxt = tasks_list + "\n" + f"Current date time is {current_time}"
+            else:
+                # Fallback in case of error
+                cnxt = "No tasks found or error retrieving tasks." + "\n" + f"Current date time is {current_time}"
+        except Exception as e:
+            # Fallback in case of exception
+            cnxt = f"Error accessing tasks: {str(e)}" + "\n" + f"Current date time is {current_time}"
     elif main_intent == 'notes':
         inst = "Given below is the current notes list. refer to this and extrapolate the note names to match existing ones. if nothing is even a remote match then use the preoutput to ask the user and give them options if possible. i repeat only move forward with something that is an exact match of the context.\n"
         try:
@@ -96,6 +109,7 @@ def get_class_name(main_intent: str, detailed_intent: str):
     mapper = {
         "notes": notes(detailed_intent),
         "file_operation": file_manager(detailed_intent),
-        "alarms" : alarms(detailed_intent)
+        "alarms": alarms(detailed_intent),
+        "task_management": tasks(detailed_intent)
     }
     return mapper.get(main_intent)
