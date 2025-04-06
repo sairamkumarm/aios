@@ -219,6 +219,13 @@ def main():
                                     ))
                                 else:
                                     display_json(jres, mode)
+                                    try:
+                                        class_name = get_class_name(jres["output"]["main_intent"], jres["output"]["detailed_intent"])
+                                        if class_name is not None:
+                                            response_text = class_name.run(jres["output"]["params"])
+                                    except Exception as e:
+                                        console.print(Panel(f"Error executing command: {str(e)}", border_style="red"))
+                                        # Fall back to the response from the AI
                                 break
                         except Exception as e:
                             console.print(Panel(f"Error processing response: {str(e)}", border_style="red"))
