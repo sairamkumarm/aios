@@ -8,9 +8,9 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.prompt import Prompt
 from rich.theme import Theme
-from rich.text import Text
 from rich.padding import Padding
 from rich.progress import Progress
+from utils import get_class_name
 
 custom_theme = Theme({
     "user": "bold cyan",
@@ -129,6 +129,8 @@ def main():
                             response_text = (jres.get("response") or 
                                           jres.get("output", {}).get("response", 
                                           "No response available"))
+                            class_name = get_class_name(jres["main_intent"], jres["detailed_intent"])
+                            response_text = class_name.run(jres["params"])
                             console.print(Panel(
                                 str(response_text),
                                 title="Response",

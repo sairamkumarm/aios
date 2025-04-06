@@ -1,5 +1,5 @@
 import json
-
+from classes.notes import notes
 with open('intents.json','r') as file:
     data = json.load(file)
 
@@ -32,7 +32,18 @@ def get_params_and_context(intents):
         cnxt = "ID Age   Description Urg\n1 19s   test 1         0\n2 13s   test 2         0\n3  3s   test 3         0"
     elif main_intent == 'notes':
         inst = "Given below is the current notes list. refer to this and extrapolate the note names to match existing ones. if nothing is even a remote match then use the preoutput to ask the user and give them options if possible. i repeat only move forward with something that is an exact match of the context.\n"
-        cnxt = "TITLE \t DATE \n shopping list \t 2025-01-25 18:31:41 \n important memos \t 2025-01-25 18:31:57 \n meeting notes 3 \t 2025-01-25 18:32:06"
+        try:
+            # Get actual notes list from the notes script
+            notes_instance = notes("list_notes")
+            notes_list = notes_instance.run({})
+            if notes_list and not notes_list.startswith("Error"):
+                cnxt = notes_list
+            else:
+                # Fallback in case of error
+                cnxt = "No notes found or error retrieving notes."
+        except Exception as e:
+            # Fallback in case of exception
+            cnxt = f"Error accessing notes: {str(e)}"
     context = inst + ' \n ' + cnxt
     output = {"params":params,"context":context}
     # print(output)
@@ -52,3 +63,8 @@ def preoutput(status: str, main_intent: str, detailed_intent: str, params: dict,
     # Return the preoutput as a formatted JSON string
     return json.dumps(preoutput_data)
 
+def get_class_name(main_intent: str, detailed_intent: str):
+    mapper = {
+        "notes": notes(detailed_intent)
+    }
+    return mapper.get(main_intent)

@@ -1,4 +1,3 @@
-from sysconfig import get_paths
 import json, time
 from config import configure_model
 from prompts import SYSTEMPROMPT
