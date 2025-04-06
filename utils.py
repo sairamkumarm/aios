@@ -1,5 +1,6 @@
 import json
 from classes.notes import notes
+from classes.file_manager import file_manager
 with open('intents.json','r') as file:
     data = json.load(file)
 
@@ -24,9 +25,20 @@ def get_params_and_context(intents):
     cnxt = 'no special context required'
     inst = " no special instructions, "
     if main_intent == 'file_operation':
-        # TODO: switch with actual retrieval
-        inst = "These are the contents of the current filesystem for your reference, when dealing with paths always consult this, try your best to infer which files the user is thinking about from this, the user most likely doesnt remember the proper filenames or the extensions, extralopolate from the data. if there is not match here preoutput the user to specify the files while giving the ones you think are likely as options to the user\n"
-        cnxt = ".\nDocuments \nDocuments/project_notes.txt \nDocuments/budget.xlsx \nDownloads \nDownloads/photo.jpg \nDownloads/video.mp4 \nDownloads/Installers \nDownloads/Installers/app_installer.deb \nMusic \nMusic/song.mp3 \nMusic/podcast.wav \nPictures \nPictures/wallpaper.png \nPictures/profile.jpg \nVideos \nVideos/movie.mkv \nVideos/tutorial.mp4"
+        inst = "These are the contents of the current filesystem for your reference, when dealing with paths always consult this, try your best to infer which files the user is thinking about from this, the user most likely doesnt remember the proper filenames or the extensions, extrapolate from the data. If there is no match here, preoutput to the user to specify the files while giving the ones you think are likely as options to the user\n"
+        try:
+            # Get actual file system contents using file_manager
+            file_mgr = file_manager("list_contents_of_directory_with_optional_file_type_filter")
+            # List contents of home directory
+            home_contents = file_mgr.run({"directory_location": "/home/oreneus", "constraint": ".{*}"})
+            if home_contents and not home_contents.startswith("Error"):
+                cnxt = home_contents
+            else:
+                # Fallback in case of error
+                cnxt = "Error listing directory contents or no files found."
+        except Exception as e:
+            # Fallback in case of exception
+            cnxt = f"Error accessing file system: {str(e)}"
     elif main_intent == 'task_management':
         inst = "Given below is the current task list. refer to this and extrapolate the task names to match existing ones. if nothing is even a remote match then use the preoutput to ask the user and give them options if possible. i repeat only move forward with something that is an exact match of the context.\n"
         cnxt = "ID Age   Description Urg\n1 19s   test 1         0\n2 13s   test 2         0\n3  3s   test 3         0"
@@ -65,6 +77,7 @@ def preoutput(status: str, main_intent: str, detailed_intent: str, params: dict,
 
 def get_class_name(main_intent: str, detailed_intent: str):
     mapper = {
-        "notes": notes(detailed_intent)
+        "notes": notes(detailed_intent),
+        "file_operation": file_manager(detailed_intent)
     }
     return mapper.get(main_intent)

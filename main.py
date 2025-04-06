@@ -34,14 +34,20 @@ def display_json(data: dict, mode: str):
             json.dumps(data, indent=2),
             "json",
             theme="monokai",
-            background_color="default"
+            background_color="default",
+            word_wrap=True  # Enable word wrapping
         )
+        # Get terminal width and use it for panel width with some margin
+        terminal_width = console.width or 100
+        panel_width = max(80, min(terminal_width - 5, 120))  # Between 80 and 120, or terminal width - 5
+        
         console.print(Panel(
             Padding(syntax, 1),
             title=title,
             border_style=msg_type,
             title_align="left",
-            width=100
+            width=panel_width,  # Dynamic width based on terminal
+            expand=False  # Prevent expanding beyond specified width
         ))
     elif mode == "training":
         console.print(json.dumps(data, indent=2))
@@ -110,7 +116,7 @@ def main():
                                     display_json(jres, mode)
                             except json.JSONDecodeError:
                                 console.print(Panel("Error: Invalid JSON response", border_style="red"))
-                                payload = {"type": "SYSTEM", "SYSTEM": "Response format incorrect. Please correct."}
+                                payload = {"type": "SYSTEM", "SYSTEM": f"Response format incorrect. Please correct. \n\n{FORMAT_PROMPT}"}
                                 try:
                                     response = chat.send_message(json.dumps(payload))
                                 except google.api_core.exceptions.ResourceExhausted as e:
