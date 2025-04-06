@@ -13,6 +13,17 @@ from rich.padding import Padding
 from rich.progress import Progress
 from utils import get_class_name
 import google.api_core.exceptions
+import sounddevice as sd
+import numpy as np
+import wave
+import requests
+import uuid
+import threading
+import keyboard
+import os
+
+WIT_TOKEN = "Bearer 5YCZYHOW6DIYF2AQT53XAYVKPT2YIGRZ"
+VOICE_TRIGGER_PHRASE = "hey assistant"  # Voice trigger phrase
 
 custom_theme = Theme({
     "user": "bold cyan",
@@ -21,7 +32,8 @@ custom_theme = Theme({
     "action": "blue",
     "observation": "magenta",
     "output": "green",
-    "error": "red"
+    "error": "red",
+    "voice": "purple"
 })
 
 console = Console(theme=custom_theme)
@@ -69,17 +81,214 @@ def get_retry_delay_from_error(error):
     # Default retry delay if we couldn't extract it
     return 5
 
+def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_record_seconds=10):
+    sample_rate = 16000
+    # Use smaller chunks for more frequent updates
+    blocksize = 512  # Smaller block size for more frequent callback calls
+    chunk_duration = blocksize / sample_rate
+    max_chunks = int(max_record_seconds / chunk_duration)
+    silence_limit = int(silence_duration / chunk_duration)
+    filename = f"{uuid.uuid4()}.wav"
+
+    console.print("[voice]🎤 Listening... (start speaking or press ESC to cancel)[/voice]")
+
+    recorded_chunks = []
+    silence_chunks = 0
+    started_talking = False
+    stop_flag = threading.Event()
+    
+    # Keep track of how long we've been recording
+    recording_start_time = None
+    last_ui_update = 0
+
+    def callback(indata, frames, time_info, status):
+        nonlocal recorded_chunks, silence_chunks, started_talking, recording_start_time, last_ui_update
+        current_time = time.time()
+
+        if stop_flag.is_set():
+            raise sd.CallbackStop
+
+        volume = np.abs(indata).mean() * 1000
+
+        if volume > silence_threshold:
+            if not started_talking:
+                console.print("[voice]🎙️ Detected speech, recording...[/voice]")
+                recording_start_time = current_time
+                last_ui_update = current_time
+            started_talking = True
+            silence_chunks = 0
+            recorded_chunks.append(indata.copy())
+        elif started_talking:
+            silence_chunks += 1
+            recorded_chunks.append(indata.copy())
+            
+            # Display remaining time more consistently - update every 0.25 seconds
+            if current_time - last_ui_update >= 0.25 and silence_chunks < silence_limit:
+                last_ui_update = current_time
+                remaining = (silence_limit - silence_chunks) * chunk_duration
+                console.print(f"[voice]⏱️ Stopping in {remaining:.1f}s...[/voice]")
+
+        # Stop if silence threshold is reached after speech was detected
+        if started_talking and silence_chunks >= silence_limit:
+            console.print("[voice]🔇 Silence detected, stopping...[/voice]")
+            stop_flag.set()
+            raise sd.CallbackStop
+            
+        # Also stop if we've recorded for too long
+        if len(recorded_chunks) >= max_chunks:
+            console.print("[voice]⏱️ Maximum duration reached, stopping...[/voice]")
+            stop_flag.set()
+            raise sd.CallbackStop
+
+    def check_for_escape():
+        while not stop_flag.is_set():
+            if keyboard.is_pressed('esc'):
+                console.print("[voice]🛑 Cancelled by user[/voice]")
+                stop_flag.set()
+                break
+            time.sleep(0.1)
+
+    escape_thread = threading.Thread(target=check_for_escape, daemon=True)
+    escape_thread.start()
+
+    start_time = time.time()
+    try:
+        with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
+                           dtype='int16', blocksize=blocksize):
+            while not stop_flag.is_set():
+                # Use shorter sleep intervals for more responsive UI
+                sd.sleep(50)
+                
+                # Add a timeout if speech hasn't started after a while
+                if not started_talking and time.time() - start_time > 6:
+                    console.print("[voice]⏱️ No speech detected, stopping...[/voice]")
+                    break
+    except sd.CallbackStop:
+        pass
+    except Exception as e:
+        console.print(f"[error]Error in audio stream: {e}[/error]")
+
+    if not recorded_chunks or stop_flag.is_set() and not started_talking:
+        console.print("[voice]❌ No speech detected or recording cancelled.[/voice]")
+        return None
+
+    if stop_flag.is_set() and started_talking:
+        duration = len(recorded_chunks) * chunk_duration
+        console.print(f"[voice]✅ Recording complete: {duration:.1f} seconds[/voice]")
+        
+        audio_data = np.concatenate(recorded_chunks, axis=0)
+        console.print("[voice]💾 Saving audio...[/voice]")
+
+        with wave.open(filename, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data.tobytes())
+
+        console.print("[voice]📤 Sending to Wit.ai...[/voice]")
+        with open(filename, 'rb') as f:
+            headers = {
+                'Authorization': WIT_TOKEN,
+                'Content-Type': 'audio/wav'
+            }
+            try:
+                response = requests.post(
+                    'https://api.wit.ai/speech?v=20230202',
+                    headers=headers,
+                    data=f
+                )
+            except Exception as e:
+                console.print(f"[error]Error sending to Wit.ai: {e}[/error]")
+                return None
+
+        console.print("[voice]✅ Wit.ai response received[/voice]")
+        
+        try:
+            # Split the response by newlines and parse each line as JSON
+            json_objects = []
+            for line in response.text.strip().split('\r'):
+                line = line.strip()
+                if line:  # Skip empty lines
+                    try:
+                        json_obj = json.loads(line)
+                        json_objects.append(json_obj)
+                    except json.JSONDecodeError:
+                        # Skip invalid JSON
+                        pass
+            
+            # Get the last valid JSON object
+            if json_objects:
+                last_response = json_objects[-1]
+                final_text = last_response.get("text", "")
+                console.print(f"[voice]You said: \"{final_text}\"[/voice]")
+                
+                # Clean up temp file
+                try:
+                    os.remove(filename)
+                except:
+                    pass
+                    
+                return final_text
+            else:
+                console.print("[error]No valid JSON objects found in response[/error]")
+                return None
+                
+        except Exception as e:
+            console.print(f"[error]Error processing response: {e}[/error]")
+            return None
+    
+    return None
+
+def listen_for_trigger(silence_threshold=250, max_wait_seconds=5):
+    """
+    Continuously listen for a trigger phrase
+    """
+    sample_rate = 16000
+    blocksize = 1024
+    trigger_detected = threading.Event()
+    
+    console.print("[voice]🎧 Listening for trigger phrase...[/voice]")
+    
+    def callback(indata, frames, time_info, status):
+        volume = np.abs(indata).mean() * 1000
+        if volume > silence_threshold:
+            # Simply detect sound above threshold
+            trigger_detected.set()
+            raise sd.CallbackStop
+    
+    try:
+        with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
+                           dtype='int16', blocksize=blocksize):
+            sd.sleep(int(max_wait_seconds * 1000))  # Convert to milliseconds
+    except sd.CallbackStop:
+        pass
+    except Exception as e:
+        console.print(f"[error]Error in trigger detection: {e}[/error]")
+    
+    return trigger_detected.is_set()
+
 def main():
     console.clear()
-    console.print(Panel.fit("AI Chat Interface", style="bold cyan"))
+    console.print(Panel.fit("Voice-Enabled AI Chat Interface", style="bold cyan"))
+    
+    use_voice_trigger = False
+    voice_mode = False
     
     while True:
         mode = Prompt.ask("Select mode", choices=["chat", "debug", "training", "exit"])
         if mode == 'exit':
             console.print(Panel("\nGoodbye!\n", border_style="yellow"))
             break
+        
+        input_method = Prompt.ask("Input method", choices=["text", "voice"])
+        voice_mode = (input_method == "voice")
+        
+        if voice_mode:
+            use_voice_trigger = Prompt.ask("Use voice trigger?", choices=["yes", "no"]) == "yes"
+            if use_voice_trigger:
+                console.print(Panel(f"Voice trigger enabled. Say or make a sound to trigger listening.", border_style="green"))
             
-        console.print(f"Operating in {mode} mode\n")
+        console.print(f"Operating in {mode} mode with {input_method} input\n")
         
         with Progress() as progress:
             task = progress.add_task("Initializing AI...", total=100)
@@ -89,7 +298,23 @@ def main():
 
         try:
             while True:
-                uinput = Prompt.ask(">> ")
+                uinput = ""
+                if voice_mode:
+                    if use_voice_trigger:
+                        # Wait for trigger sound
+                        if listen_for_trigger():
+                            uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                    else:
+                        # Direct voice command without trigger
+                        uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                        
+                    if not uinput:
+                        console.print("[voice]No voice input detected. Try again or type 'exit'.[/voice]")
+                        # Fallback to text input if voice fails
+                        uinput = Prompt.ask(">> ")
+                else:
+                    uinput = Prompt.ask(">> ")
+                
                 if uinput.lower() in ['exit', 'quit', 'bye']:
                     raise KeyboardInterrupt
                     
@@ -154,7 +379,26 @@ def main():
                                 fcn, ipt = jres["function"], jres["input"]
 
                                 if fcn == 'preoutput':
-                                    pmessage = Prompt.ask(f'[cyan]{ipt["response"]}[/cyan]')
+                                    # For voice mode, we'll also support voice response option
+                                    if voice_mode:
+                                        options = ["voice", "text"]
+                                        resp_method = Prompt.ask(
+                                            f'[cyan]{ipt["response"]}[/cyan]\nRespond with', 
+                                            choices=options, 
+                                            default="text"
+                                        )
+                                        
+                                        if resp_method == "voice":
+                                            console.print("[voice]Speak your response...[/voice]")
+                                            pmessage = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                                            if not pmessage:
+                                                # Fallback to text
+                                                pmessage = Prompt.ask(f'[cyan]Voice not detected. Please type response[/cyan]')
+                                        else:
+                                            pmessage = Prompt.ask(f'[cyan]Type your response[/cyan]')
+                                    else:
+                                        pmessage = Prompt.ask(f'[cyan]{ipt["response"]}[/cyan]')
+                                    
                                     payload = {
                                         "type": "preoutput_user_answer",
                                         "preoutput_user_answer": pmessage
@@ -218,7 +462,6 @@ def main():
                                     
                                     console.print(Panel(
                                         str(ai_response_text),
-
                                         title="Response",
                                         border_style="green",
                                         padding=(1, 2),

@@ -12,7 +12,7 @@ class notes:
         """
         Initialize the notes class.
         """
-        self.script_path = "/usr/local/bin/notes"
+        self.script_path = "/home/roopsagar-k/.local/bin/notes"
         self.detailed_intent = detailed_intent
     
     def run(self, params: dict):
