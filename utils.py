@@ -1,6 +1,9 @@
 import json
 from classes.notes import notes
 from classes.file_manager import file_manager
+from classes.alarm import alarms
+from datetime import datetime
+
 with open('intents.json','r') as file:
     data = json.load(file)
 
@@ -56,6 +59,20 @@ def get_params_and_context(intents):
         except Exception as e:
             # Fallback in case of exception
             cnxt = f"Error accessing notes: {str(e)}"
+    elif main_intent == 'alarms':
+        current_time = datetime.now().astimezone().strftime("%A, %B %d, %Y at %I:%M:%S.%f %p %Z (UTC%z)")
+        try :
+            alarms_instance = alarms("list_scheduled_alarms")
+            alarms_list = alarms_instance.run({})
+            if alarms_list and not alarms_list.startswith("Error"):
+                cnxt = alarms_list + "\n" + f"Current date time is {current_time}"
+            else:
+                # Fallback in case of error
+                cnxt = "No alarms found or error retrieving notes." + "\n" + f"Current date time is {current_time}"
+        except Exception as e:
+            # Fallback in case of exception
+            cnxt = f"Error accessing alarm: {str(e)}" + "\n" + f"Current date time is {current_time}"
+
     context = inst + ' \n ' + cnxt
     output = {"params":params,"context":context}
     # print(output)
@@ -78,6 +95,7 @@ def preoutput(status: str, main_intent: str, detailed_intent: str, params: dict,
 def get_class_name(main_intent: str, detailed_intent: str):
     mapper = {
         "notes": notes(detailed_intent),
-        "file_operation": file_manager(detailed_intent)
+        "file_operation": file_manager(detailed_intent),
+        "alarms" : alarms(detailed_intent)
     }
     return mapper.get(main_intent)
