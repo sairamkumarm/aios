@@ -199,7 +199,7 @@ def main():
 
                             elif jres["type"] == 'output':
                                 if mode == "chat":
-                                    response_text = (jres.get("response") or 
+                                    ai_response_text = (jres.get("response") or 
                                                   jres.get("output", {}).get("response", 
                                                   "No response available"))
                                     try:
@@ -211,7 +211,8 @@ def main():
                                         # Fall back to the response from the AI
                                     
                                     console.print(Panel(
-                                        str(response_text),
+                                        str(ai_response_text),
+
                                         title="Response",
                                         border_style="green",
                                         padding=(1, 2),
