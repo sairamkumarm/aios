@@ -1,5 +1,7 @@
 import json
 from classes.notes import notes
+from classes.alarm import alarms
+
 with open('intents.json','r') as file:
     data = json.load(file)
 
@@ -65,6 +67,7 @@ def preoutput(status: str, main_intent: str, detailed_intent: str, params: dict,
 
 def get_class_name(main_intent: str, detailed_intent: str):
     mapper = {
-        "notes": notes(detailed_intent)
+        "notes": notes(detailed_intent),
+        "alarms" : alarms(detailed_intent)
     }
     return mapper.get(main_intent)
