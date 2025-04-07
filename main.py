@@ -19,11 +19,11 @@ import wave
 import requests
 import uuid
 import threading
-import keyboard
 import os
+import signal
 
 WIT_TOKEN = "Bearer 5YCZYHOW6DIYF2AQT53XAYVKPT2YIGRZ"
-VOICE_TRIGGER_PHRASE = "hey assistant"  # Voice trigger phrase
+TEMP_AUDIO_FILENAME = "temp_audio.wav"  # Fixed filename for temp audio
 
 custom_theme = Theme({
     "user": "bold cyan",
@@ -33,7 +33,8 @@ custom_theme = Theme({
     "observation": "magenta",
     "output": "green",
     "error": "red",
-    "voice": "purple"
+    "voice": "purple",
+    "info": "italic dim white"
 })
 
 console = Console(theme=custom_theme)
@@ -47,19 +48,18 @@ def display_json(data: dict, mode: str):
             "json",
             theme="monokai",
             background_color="default",
-            word_wrap=True  # Enable word wrapping
+            word_wrap=True
         )
-        # Get terminal width and use it for panel width with some margin
         terminal_width = console.width or 100
-        panel_width = max(80, min(terminal_width - 5, 120))  # Between 80 and 120, or terminal width - 5
+        panel_width = max(80, min(terminal_width - 5, 120))
         
         console.print(Panel(
             Padding(syntax, 1),
             title=title,
             border_style=msg_type,
             title_align="left",
-            width=panel_width,  # Dynamic width based on terminal
-            expand=False  # Prevent expanding beyond specified width
+            width=panel_width,
+            expand=False
         ))
     elif mode == "training":
         console.print(json.dumps(data, indent=2))
@@ -70,7 +70,6 @@ def get_retry_delay_from_error(error):
     """
     error_str = str(error)
     try:
-        # Try to extract retry delay from the error message
         if "retry_delay" in error_str and "seconds" in error_str:
             import re
             match = re.search(r'retry_delay \{\s*seconds: (\d+)\s*\}', error_str)
@@ -78,26 +77,30 @@ def get_retry_delay_from_error(error):
                 return int(match.group(1))
     except Exception:
         pass
-    # Default retry delay if we couldn't extract it
     return 5
 
 def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_record_seconds=10):
     sample_rate = 16000
-    # Use smaller chunks for more frequent updates
-    blocksize = 512  # Smaller block size for more frequent callback calls
+    blocksize = 512
     chunk_duration = blocksize / sample_rate
     max_chunks = int(max_record_seconds / chunk_duration)
     silence_limit = int(silence_duration / chunk_duration)
-    filename = f"{uuid.uuid4()}.wav"
+    filename = TEMP_AUDIO_FILENAME  # Use the fixed filename
 
-    console.print("[voice]🎤 Listening... (start speaking or press ESC to cancel)[/voice]")
+    # Clean up any existing temp file
+    if os.path.exists(filename):
+        try:
+            os.remove(filename)
+        except:
+            pass
 
+    console.print("[voice]🎤 Recording... (Press Enter to stop)[/voice]")
+    
     recorded_chunks = []
     silence_chunks = 0
     started_talking = False
     stop_flag = threading.Event()
     
-    # Keep track of how long we've been recording
     recording_start_time = None
     last_ui_update = 0
 
@@ -112,7 +115,7 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
 
         if volume > silence_threshold:
             if not started_talking:
-                console.print("[voice]🎙️ Detected speech, recording...[/voice]")
+                console.print("[voice]🎙️ Speech detected[/voice]", end="\r")
                 recording_start_time = current_time
                 last_ui_update = current_time
             started_talking = True
@@ -122,11 +125,11 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
             silence_chunks += 1
             recorded_chunks.append(indata.copy())
             
-            # Display remaining time more consistently - update every 0.25 seconds
+            # Show auto-stop countdown only when silence is detected
             if current_time - last_ui_update >= 0.25 and silence_chunks < silence_limit:
                 last_ui_update = current_time
                 remaining = (silence_limit - silence_chunks) * chunk_duration
-                console.print(f"[voice]⏱️ Stopping in {remaining:.1f}s...[/voice]")
+                console.print(f"[voice]🎤 Recording... Auto-stop in {remaining:.1f}s (Press Enter to stop manually)[/voice]", end="\r")
 
         # Stop if silence threshold is reached after speech was detected
         if started_talking and silence_chunks >= silence_limit:
@@ -136,27 +139,35 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
             
         # Also stop if we've recorded for too long
         if len(recorded_chunks) >= max_chunks:
-            console.print("[voice]⏱️ Maximum duration reached, stopping...[/voice]")
+            console.print("[voice]⏱️ Maximum duration reached[/voice]")
             stop_flag.set()
             raise sd.CallbackStop
 
-    def check_for_escape():
+    def check_for_enter():
+        # Use signal based approach instead of keyboard library
         while not stop_flag.is_set():
-            if keyboard.is_pressed('esc'):
-                console.print("[voice]🛑 Cancelled by user[/voice]")
-                stop_flag.set()
-                break
-            time.sleep(0.1)
+            # Check if enter was pressed using a simple input with timeout
+            try:
+                # We're using a hacky solution with os.read and select for non-blocking input
+                import select
+                rlist, _, _ = select.select([0], [], [], 0.1)  # 0 is stdin
+                if rlist:
+                    key = os.read(0, 1024).decode().strip()
+                    if key:  # If Enter was pressed
+                        console.print("[voice]🛑 Recording stopped by user[/voice]")
+                        stop_flag.set()
+                        break
+            except Exception:
+                time.sleep(0.1)  # Fall back to simple sleep if the above fails
 
-    escape_thread = threading.Thread(target=check_for_escape, daemon=True)
-    escape_thread.start()
+    enter_thread = threading.Thread(target=check_for_enter, daemon=True)
+    enter_thread.start()
 
     start_time = time.time()
     try:
         with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
                            dtype='int16', blocksize=blocksize):
             while not stop_flag.is_set():
-                # Use shorter sleep intervals for more responsive UI
                 sd.sleep(50)
                 
                 # Add a timeout if speech hasn't started after a while
@@ -172,20 +183,20 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
         console.print("[voice]❌ No speech detected or recording cancelled.[/voice]")
         return None
 
-    if stop_flag.is_set() and started_talking:
+    if len(recorded_chunks) > 0:
         duration = len(recorded_chunks) * chunk_duration
-        console.print(f"[voice]✅ Recording complete: {duration:.1f} seconds[/voice]")
+        
+        console.print(f"[voice]✅ Recording complete ({duration:.1f}s)[/voice]")
         
         audio_data = np.concatenate(recorded_chunks, axis=0)
-        console.print("[voice]💾 Saving audio...[/voice]")
-
+        
         with wave.open(filename, 'wb') as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
             wf.writeframes(audio_data.tobytes())
 
-        console.print("[voice]📤 Sending to Wit.ai...[/voice]")
+        console.print("[voice]📤 Processing speech...[/voice]")
         with open(filename, 'rb') as f:
             headers = {
                 'Authorization': WIT_TOKEN,
@@ -201,8 +212,6 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
                 console.print(f"[error]Error sending to Wit.ai: {e}[/error]")
                 return None
 
-        console.print("[voice]✅ Wit.ai response received[/voice]")
-        
         try:
             # Split the response by newlines and parse each line as JSON
             json_objects = []
@@ -220,14 +229,7 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
             if json_objects:
                 last_response = json_objects[-1]
                 final_text = last_response.get("text", "")
-                console.print(f"[voice]You said: \"{final_text}\"[/voice]")
-                
-                # Clean up temp file
-                try:
-                    os.remove(filename)
-                except:
-                    pass
-                    
+                console.print(f"[voice]🗣️ You said: \"{final_text}\"[/voice]")
                 return final_text
             else:
                 console.print("[error]No valid JSON objects found in response[/error]")
@@ -239,39 +241,10 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
     
     return None
 
-def listen_for_trigger(silence_threshold=250, max_wait_seconds=5):
-    """
-    Continuously listen for a trigger phrase
-    """
-    sample_rate = 16000
-    blocksize = 1024
-    trigger_detected = threading.Event()
-    
-    console.print("[voice]🎧 Listening for trigger phrase...[/voice]")
-    
-    def callback(indata, frames, time_info, status):
-        volume = np.abs(indata).mean() * 1000
-        if volume > silence_threshold:
-            # Simply detect sound above threshold
-            trigger_detected.set()
-            raise sd.CallbackStop
-    
-    try:
-        with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
-                           dtype='int16', blocksize=blocksize):
-            sd.sleep(int(max_wait_seconds * 1000))  # Convert to milliseconds
-    except sd.CallbackStop:
-        pass
-    except Exception as e:
-        console.print(f"[error]Error in trigger detection: {e}[/error]")
-    
-    return trigger_detected.is_set()
-
 def main():
     console.clear()
-    console.print(Panel.fit("Voice-Enabled AI Chat Interface", style="bold cyan"))
+    console.print(Panel.fit("🎙️ Voice-Enabled AI Chat Interface", style="bold cyan"))
     
-    use_voice_trigger = False
     voice_mode = False
     
     while True:
@@ -284,9 +257,13 @@ def main():
         voice_mode = (input_method == "voice")
         
         if voice_mode:
-            use_voice_trigger = Prompt.ask("Use voice trigger?", choices=["yes", "no"]) == "yes"
-            if use_voice_trigger:
-                console.print(Panel(f"Voice trigger enabled. Say or make a sound to trigger listening.", border_style="green"))
+            voice_instructions = """
+            [info]Voice mode instructions:[/info]
+            [info]- Press Enter to start/stop recording[/info]
+            [info]- Recording will automatically stop after silence[/info]
+            [info]- Type 'exit' to quit at any time[/info]
+            """
+            console.print(Panel(voice_instructions, border_style="cyan", title="Voice Mode"))
             
         console.print(f"Operating in {mode} mode with {input_method} input\n")
         
@@ -300,18 +277,20 @@ def main():
             while True:
                 uinput = ""
                 if voice_mode:
-                    if use_voice_trigger:
-                        # Wait for trigger sound
-                        if listen_for_trigger():
-                            uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
-                    else:
-                        # Direct voice command without trigger
+                    # Simple prompt to indicate readiness
+                    console.print("[voice]📝 Ready for input - Press Enter to speak or type your message[/voice]")
+                    
+                    # Check if user presses Enter (for voice) or types anything else
+                    user_action = input()
+                    
+                    if not user_action.strip():  # Empty input (Enter pressed)
                         uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
-                        
-                    if not uinput:
-                        console.print("[voice]No voice input detected. Try again or type 'exit'.[/voice]")
-                        # Fallback to text input if voice fails
-                        uinput = Prompt.ask(">> ")
+                        if not uinput:
+                            console.print("[voice]No voice input detected. Please try again.[/voice]")
+                            continue
+                    else:
+                        # User typed something instead of using voice
+                        uinput = user_action
                 else:
                     uinput = Prompt.ask(">> ")
                 
@@ -345,7 +324,6 @@ def main():
                                 try:
                                     response = chat.send_message(json.dumps(payload))
                                 except google.api_core.exceptions.ResourceExhausted as e:
-                                    # Handle rate limit exceeded
                                     retry_delay = get_retry_delay_from_error(e)
                                     console.print(Panel(
                                         f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
@@ -363,7 +341,6 @@ def main():
                                 try:
                                     response = chat.send_message(json.dumps(payload))
                                 except google.api_core.exceptions.ResourceExhausted as e:
-                                    # Handle rate limit exceeded
                                     retry_delay = get_retry_delay_from_error(e)
                                     console.print(Panel(
                                         f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
@@ -379,23 +356,19 @@ def main():
                                 fcn, ipt = jres["function"], jres["input"]
 
                                 if fcn == 'preoutput':
-                                    # For voice mode, we'll also support voice response option
+                                    # Simplified user response prompt
                                     if voice_mode:
-                                        options = ["voice", "text"]
-                                        resp_method = Prompt.ask(
-                                            f'[cyan]{ipt["response"]}[/cyan]\nRespond with', 
-                                            choices=options, 
-                                            default="text"
-                                        )
+                                        console.print(f'[cyan]{ipt["response"]}[/cyan]')
+                                        console.print("[voice]Press Enter to speak your response or type it:[/voice]")
                                         
-                                        if resp_method == "voice":
-                                            console.print("[voice]Speak your response...[/voice]")
+                                        user_action = input()
+                                        
+                                        if not user_action.strip():  # Empty input (Enter pressed)
                                             pmessage = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
                                             if not pmessage:
-                                                # Fallback to text
                                                 pmessage = Prompt.ask(f'[cyan]Voice not detected. Please type response[/cyan]')
                                         else:
-                                            pmessage = Prompt.ask(f'[cyan]Type your response[/cyan]')
+                                            pmessage = user_action
                                     else:
                                         pmessage = Prompt.ask(f'[cyan]{ipt["response"]}[/cyan]')
                                     
@@ -406,7 +379,6 @@ def main():
                                     try:
                                         response = chat.send_message(json.dumps(payload))
                                     except google.api_core.exceptions.ResourceExhausted as e:
-                                        # Handle rate limit exceeded
                                         retry_delay = get_retry_delay_from_error(e)
                                         console.print(Panel(
                                             f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
@@ -435,7 +407,6 @@ def main():
                                     try:
                                         response = chat.send_message(json.dumps(observation_payload))
                                     except google.api_core.exceptions.ResourceExhausted as e:
-                                        # Handle rate limit exceeded
                                         retry_delay = get_retry_delay_from_error(e)
                                         console.print(Panel(
                                             f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
@@ -458,14 +429,13 @@ def main():
                                             response_text = class_name.run(jres["output"]["params"])
                                     except Exception as e:
                                         console.print(Panel(f"Error executing command: {str(e)}", border_style="red"))
-                                        # Fall back to the response from the AI
                                     
                                     console.print(Panel(
                                         str(ai_response_text),
                                         title="Response",
                                         border_style="green",
                                         padding=(1, 2),
-                                        width=80
+                                        expand=False  # Allow text to wrap naturally
                                     ))
                                 else:
                                     display_json(jres, mode)
@@ -475,7 +445,6 @@ def main():
                                             response_text = class_name.run(jres["output"]["params"])
                                     except Exception as e:
                                         console.print(Panel(f"Error executing command: {str(e)}", border_style="red"))
-                                        # Fall back to the response from the AI
                                 break
                         except Exception as e:
                             console.print(Panel(f"Error processing response: {str(e)}", border_style="red"))
@@ -484,7 +453,6 @@ def main():
                     if mode != "chat":
                         console.print(f"Finished in {(time.time() - start_time):.2f}s\n")
                 except google.api_core.exceptions.ResourceExhausted as e:
-                    # Handle rate limit exceeded
                     retry_delay = get_retry_delay_from_error(e)
                     console.print(Panel(
                         f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
@@ -498,6 +466,13 @@ def main():
             console.print("\n")
             console.print(Panel("\nClosing session. Goodbye!\n", border_style="yellow"))
             break
+        finally:
+            # Clean up the temp audio file before exiting
+            if os.path.exists(TEMP_AUDIO_FILENAME):
+                try:
+                    os.remove(TEMP_AUDIO_FILENAME)
+                except:
+                    pass
 
 if __name__ == "__main__":
     main()
