@@ -6,8 +6,9 @@ import uuid
 import threading
 import json
 import time
+import os
 
-WIT_TOKEN = "Bearer 5YCZYHOW6DIYF2AQT53XAYVKPT2YIGRZ"
+WIT_TOKEN = str("Bearer "+os.environ.get('WIT_TOKEN'))
 
 def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_record_seconds=10):
     sample_rate = 16000
