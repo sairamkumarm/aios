@@ -1,0 +1,1177 @@
+import json
+import time
+import traceback
+from config import configure_model
+from prompts import SYSTEMPROMPT, FORMAT_PROMPT
+from utils import get_detailed_intents, get_main_intents, get_params_and_context
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.prompt import Prompt
+from rich.theme import Theme
+from rich.padding import Padding
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.table import Table
+from rich.box import DOUBLE, ROUNDED
+from rich.align import Align
+from rich.layout import Layout
+from rich.live import Live
+from rich.text import Text
+from utils import get_class_name
+import google.api_core.exceptions
+import sounddevice as sd
+import numpy as np
+import wave
+import requests
+import uuid
+import threading
+import os
+import signal
+import pvporcupine
+import random
+
+WIT_TOKEN = f"Bearer {os.environ.get('WIT_TOKEN')}"
+TEMP_AUDIO_FILENAME = "temp_audio.wav"  # Fixed filename for temp audio
+VOICE_TRIGGER_PHRASE = "jarvis"  # Voice trigger phrase
+
+# ASCII art for headers
+HEADER_ART = """
+╭━━━╮╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╭━━━╮╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+┃╭━╮┃╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱┃╭━╮┃╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+┃┃╱┃┣━━┬━━┬━━┬━━┬━━┬━╮╱╱┃┃╱╰╋━━┬━━┬━━┬━━┬━━┬━━┬━╮╱╭━━┬━╮╱╭┬━━┬━━┬━━━╮
+┃╰━╯┃╭╮┃╭╮┃┃━┫┃━┫╭╮┃╭╮╮╱┃┃╱╭┫╭╮┃╭━┫━━┫┃━┫╭╮┃┃━┫╭╮╮┃╭╮┃┃┃╱┃┃╭╮┃╭╮┃━━┃┃
+┃╭━╮┃╭╮┃╰╯┃┃━┫┃━┫╭╮┃┃┃┃╱┃╰━╯┃╰╯┃╰━╋━━┃┃━┫╭╮┃┃━┫┃┃┃┃╰╯┃┃┃╱┃┃╭╮┃╰╯┣━━┃┃
+╰╯╱╰┻╯╰┫╭━┻━━┻━━┻╯╰┻╯╰╯╱╰━━━┻━━┻━━┻━━┻━━┻╯╰┻━━┻╯╰╯╰━━┻╯╰━╯┻╯╰┻━━┻━━━╯
+╱╱╱╱╱╱╱┃┃╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+╱╱╱╱╱╱╱╰╯╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱╱
+
+"""
+
+LISTENING_ART = """
+╭━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━╮╱╭┳━━━╮
+┃╭━━┫╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃┃╰╮┃┃╭━╮┃
+┃╰━━┫┃╱╰┫╰━╯┃┃╱┃┃┃╱╰┫┃╱┃┃┃╱┃┃┃╱╰┫╭╮╰╯┃┃╱╰╯
+┃╭━━┫┃╱╭┫╭╮╭┫┃╱┃┃┃╭━┫┃╱┃┃┃╱┃┃┃╱╭┫┃╰╮┃┃┃╭━╮
+┃┃╱╱┃╰━╯┃┃┃╰┫╰━╯┃╰┻━┃╰━╯┃╰━╯┃╰━╯┃┃╱┃┃┃╰┻━┃
+╰╯╱╱╰━━━┻╯╰━┻━━━┻━━━┻━━━┻━━━┻━━━┻╯╱╰━┻━━━╯
+"""
+
+THINKING_ART = """
+╭━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━╮
+┃╭━╮┃╭━━┫╭━━┫╭━╮┃╭━╮┃╭━╮┃╭━━┫╭━━╯
+┃╰━╯┃┃╱╱┃╰━━┫╰━╯┃┃╱┃┃╰━━┫╰━━┫╰━━╮
+┃╭╮╭┫┃╱╱┃╭━━┫╭━━┫┃╱┃┣━━╮┃╭━━┫╭━━╯
+┃┃┃╰┫╰━━┫╰━━┫┃╱╱┃╰━╯┃╰━╯┃╰━━┫╰━━╮
+╰╯╰━┻━━━┻━━━┻╯╱╱╰━━━┻━━━┻━━━┻━━━╯
+"""
+
+RESPONSE_ART = """
+╭━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━┳━━━╮
+┃╭━╮┃╭━━┫╭━━┫╭━╮┃╭━╮┃╭━╮┃╭━━┫╭━━╯
+┃╰━╯┃┃╱╱┃╰━━┫╰━╯┃┃╱┃┃╰━━┫╰━━┫╰━━╮
+┃╭╮╭┫┃╱╱┃╭━━┫╭━━┫┃╱┃┣━━╮┃╭━━┫╭━━╯
+┃┃┃╰┫╰━━┫╰━━┫┃╱╱┃╰━╯┃╰━╯┃╰━━┫╰━━╮
+╰╯╰━┻━━━┻━━━┻╯╱╱╰━━━┻━━━┻━━━┻━━━╯
+"""
+
+# Purple-themed color palette
+custom_theme = Theme({
+    "user": "bold #9966CC",  # Amethyst purple
+    "system": "dim #E0B0FF",  # Mauve
+    "plan": "#DDA0DD",  # Plum
+    "action": "#9370DB",  # Medium purple
+    "observation": "#BA55D3",  # Medium orchid
+    "output": "#8A2BE2",  # Blue violet
+    "error": "#FF69B4",  # Hot pink
+    "voice": "#DA70D6",  # Orchid
+    "info": "italic #D8BFD8",  # Thistle
+    "title": "bold #9400D3",  # Dark violet
+    "subtitle": "#800080",  # Purple
+    "highlight": "#EE82EE",  # Violet
+    "border": "#9932CC",  # Dark orchid
+    "progress": "#A020F0",  # Purple
+    "success": "#00FF7F",  # Spring green
+    "warning": "#FFD700",  # Gold
+})
+
+console = Console(theme=custom_theme)
+
+# Fancy spinner styles for loading animations
+SPINNERS = ["dots", "dots2", "dots3", "dots4", "dots5", "dots6", "dots7", "dots8", "dots9", "dots10", "dots11", "dots12"]
+
+# Box styles for panels
+BOX_STYLES = [DOUBLE, ROUNDED]
+
+def display_json(data: dict, mode: str):
+    msg_type = data.get('type', '').lower()
+    if mode == "debug":
+        title = f"[{msg_type}]{msg_type.upper()}[/{msg_type}]"
+        syntax = Syntax(
+            json.dumps(data, indent=2),
+            "json",
+            theme="monokai",
+            background_color="default",
+            word_wrap=True
+        )
+        terminal_width = console.width or 100
+        panel_width = max(80, min(terminal_width - 5, 120))
+        
+        console.print(Panel(
+            Padding(syntax, 1),
+            title=title,
+            border_style=msg_type,
+            title_align="left",
+            width=panel_width,
+            expand=False
+        ))
+    elif mode == "training":
+        console.print(json.dumps(data, indent=2))
+
+def get_retry_delay_from_error(error):
+    """
+    Extract the retry delay from a GoogleAPI ResourceExhausted error.
+    """
+    error_str = str(error)
+    try:
+        if "retry_delay" in error_str and "seconds" in error_str:
+            import re
+            match = re.search(r'retry_delay \{\s*seconds: (\d+)\s*\}', error_str)
+            if match:
+                return int(match.group(1))
+    except Exception:
+        pass
+    return 5
+
+def check_for_user_input():
+    """
+    Non-blocking check for user input to exit trigger word detection.
+    Returns True if user input is detected, False otherwise.
+    """
+    try:
+        import select
+        import sys
+        
+        # Check if there's data available to read from stdin
+        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(rlist)
+    except Exception as e:
+        console.print(f"[error]Error checking for user input: {e}[/error]")
+        return False
+
+def process_voice_command(audio_data, sample_rate):
+    """
+    Process a voice command and determine if it's an exit command.
+    Returns True if the command is 'exit', False otherwise.
+    """
+    # Save the audio data to a temporary file
+    temp_exit_filename = "temp_exit_check.wav"
+    
+    try:
+        with wave.open(temp_exit_filename, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data.tobytes())
+            
+        # Send to Wit.ai for processing
+        with open(temp_exit_filename, 'rb') as f:
+            headers = {
+                'Authorization': WIT_TOKEN,
+                'Content-Type': 'audio/wav'
+            }
+            
+            try:
+                response = requests.post(
+                    'https://api.wit.ai/speech',
+                    headers=headers,
+                    data=f
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        # Use response.text instead of direct json() to handle potential JSON parsing issues
+                        result = json.loads(response.text)
+                        if 'text' in result:
+                            text = result['text'].lower()
+                            # Only print detected command if it might be an exit command
+                            if any(word in text for word in ['exit', 'quit', 'bye', 'stop']):
+                                console.print(f"[voice]Detected command: {text}[/voice]")
+                                console.print("[voice]Exit command detected![/voice]")
+                                return True
+                    except json.JSONDecodeError:
+                        # Silently handle JSON parsing errors
+                        pass
+            except Exception:
+                # Silently ignore network or other errors to avoid spamming the console
+                pass
+    except Exception:
+        # Silently ignore file handling errors
+        pass
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_exit_filename):
+            try:
+                os.remove(temp_exit_filename)
+            except:
+                pass
+    
+    return False
+
+def listen_for_trigger_word(max_retries=3, retry_delay=2):
+    """
+    Continuously listen for the trigger phrase 'jarvis' using pvporcupine.
+    Returns True when the trigger word is detected.
+    Also listens for the exit command "exit" and raises KeyboardInterrupt if detected.
+    
+    Args:
+        max_retries: Maximum number of retries if device error occurs
+        retry_delay: Delay in seconds between retries
+    """
+    # Fallback to simple volume-based detection if we can't use pvporcupine
+    use_fallback = False
+    retries = 0
+    
+    while retries <= max_retries:
+        if use_fallback:
+            return listen_for_sound_activity()
+            
+        console.print(f"[voice]🎧 Listening for trigger phrase '{VOICE_TRIGGER_PHRASE}' or say 'exit' to quit...[/voice]")
+        
+        # Initialize pvporcupine for hotword detection
+        porcupine = None
+        audio_stream = None
+        
+        try:
+            # Create a porcupine instance for the 'jarvis' keyword
+            # Using 'jarvis' as a substitute for demo since 'jarvis' would need a custom model
+            porcupine = pvporcupine.create(
+                keywords=['jarvis'],
+                access_key=os.environ.get('PICO_TOKEN')
+            )
+            
+            # Audio parameters
+            sample_rate = porcupine.sample_rate
+            frame_length = porcupine.frame_length
+            
+            # Setup audio stream with explicit device selection
+            # Try to use default device (device=None)
+            audio_stream = sd.InputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype='int16',
+                blocksize=frame_length,
+                callback=None,
+                device=None  # Use default device
+            )
+            
+            audio_stream.start()
+            
+            console.print(f"[voice]🔊 Say '{VOICE_TRIGGER_PHRASE}' to activate voice mode or 'exit' to quit (Press Ctrl+C to cancel)[/voice]")
+            
+            # Buffer to store recent audio for command detection
+            audio_buffer = []
+            max_buffer_size = int(2 * sample_rate / frame_length)  # Store about 2 seconds of audio
+            
+            # Variables to control how often we check for exit commands
+            last_command_check = time.time()
+            command_check_interval = 3  # Check every 3 seconds
+            
+            # Process audio frames
+            while True:
+                # Check for user input to exit (non-blocking)
+                if check_for_user_input():
+                    console.print("[voice]Exiting trigger mode due to user input[/voice]")
+                    return False
+                    
+                # Read audio frame
+                audio_frame, overflowed = audio_stream.read(frame_length)
+                audio_frame = audio_frame.flatten().astype(np.int16)
+                
+                # Add to buffer for potential command detection
+                audio_buffer.append(audio_frame.copy())
+                if len(audio_buffer) > max_buffer_size:
+                    audio_buffer.pop(0)
+                
+                # Process with porcupine
+                keyword_index = porcupine.process(audio_frame)
+                
+                # If keyword detected
+                if keyword_index >= 0:
+                    console.print("[voice]✅ Trigger phrase detected![/voice]")
+                    return True
+                
+                # Check for exit command periodically (not every frame)
+                current_time = time.time()
+                if current_time - last_command_check >= command_check_interval and len(audio_buffer) == max_buffer_size:
+                    last_command_check = current_time
+                    
+                    # Calculate average volume
+                    avg_volume = np.mean([np.abs(frame).mean() for frame in audio_buffer[-10:]])
+                    
+                    # If volume is above threshold, check for exit command
+                    if avg_volume > 300:  # Increased threshold to reduce false positives
+                        # Concatenate buffer for processing
+                        combined_audio = np.concatenate(audio_buffer, axis=0)
+                        
+                        # Check if it's an exit command
+                        if process_voice_command(combined_audio, sample_rate):
+                            console.print("[voice]Exit command detected. Closing application...[/voice]")
+                            raise KeyboardInterrupt
+                        
+                        # Clear buffer after processing
+                        audio_buffer = []
+                    
+        except KeyboardInterrupt:
+            console.print("[voice]🛑 Trigger word detection cancelled[/voice]")
+            raise  # Re-raise to propagate to main
+        except Exception as e:
+            console.print(f"[error]Error in trigger word detection: {e}[/error]")
+            retries += 1
+            
+            if retries > max_retries:
+                console.print("[warning]Maximum retries exceeded. Switching to fallback detection method.[/warning]")
+                use_fallback = True
+            else:
+                console.print(f"[warning]Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})[/warning]")
+                time.sleep(retry_delay)
+        finally:
+            # Clean up resources
+            try:
+                if audio_stream is not None:
+                    audio_stream.stop()
+                if porcupine is not None:
+                    porcupine.delete()
+            except Exception as cleanup_error:
+                console.print(f"[error]Error during cleanup: {cleanup_error}[/error]")
+    
+    return False
+
+def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_record_seconds=30):
+    sample_rate = 16000
+    blocksize = 512
+    chunk_duration = blocksize / sample_rate
+    max_chunks = int(max_record_seconds / chunk_duration)
+    silence_limit = int(silence_duration / chunk_duration)
+    filename = TEMP_AUDIO_FILENAME  # Use the fixed filename
+
+    # Clean up any existing temp file
+    if os.path.exists(filename):
+        try:
+            os.remove(filename)
+        except:
+            pass
+
+    console.print("[voice]🎤 Recording... (Press Enter to stop)[/voice]")
+    
+    recorded_chunks = []
+    silence_chunks = 0
+    started_talking = False
+    stop_flag = threading.Event()
+    
+    recording_start_time = None
+    last_ui_update = 0
+
+    def callback(indata, frames, time_info, status):
+        nonlocal recorded_chunks, silence_chunks, started_talking, recording_start_time, last_ui_update
+        current_time = time.time()
+
+        if stop_flag.is_set():
+            raise sd.CallbackStop
+
+        volume = np.abs(indata).mean() * 1000
+
+        if volume > silence_threshold:
+            if not started_talking:
+                console.print("[voice]🎙️ Speech detected[/voice]", end="\r")
+                recording_start_time = current_time
+                last_ui_update = current_time
+            started_talking = True
+            silence_chunks = 0
+            recorded_chunks.append(indata.copy())
+        elif started_talking:
+            silence_chunks += 1
+            recorded_chunks.append(indata.copy())
+            
+            # Show auto-stop countdown only when silence is detected
+            if current_time - last_ui_update >= 0.25 and silence_chunks < silence_limit:
+                last_ui_update = current_time
+                remaining = (silence_limit - silence_chunks) * chunk_duration
+                console.print(f"[voice]🎤 Recording... Auto-stop in {remaining:.1f}s (Press Enter to stop manually)[/voice]", end="\r")
+
+        # Stop if silence threshold is reached after speech was detected
+        if started_talking and silence_chunks >= silence_limit:
+            console.print("[voice]🔇 Silence detected, stopping...[/voice]")
+            stop_flag.set()
+            raise sd.CallbackStop
+            
+        # Also stop if we've recorded for too long
+        if len(recorded_chunks) >= max_chunks:
+            console.print("[voice]⏱️ Maximum duration reached[/voice]")
+            stop_flag.set()
+            raise sd.CallbackStop
+
+    def check_for_enter():
+        # Use signal based approach instead of keyboard library
+        while not stop_flag.is_set():
+            # Check if enter was pressed using a simple input with timeout
+            try:
+                # We're using a hacky solution with os.read and select for non-blocking input
+                import select
+                rlist, _, _ = select.select([0], [], [], 0.1)  # 0 is stdin
+                if rlist:
+                    key = os.read(0, 1024).decode().strip()
+                    if key:  # If Enter was pressed
+                        console.print("[voice]🛑 Recording stopped by user[/voice]")
+                        stop_flag.set()
+                        break
+            except Exception:
+                time.sleep(0.1)  # Fall back to simple sleep if the above fails
+
+    enter_thread = threading.Thread(target=check_for_enter, daemon=True)
+    enter_thread.start()
+
+    start_time = time.time()
+    try:
+        with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
+                           dtype='int16', blocksize=blocksize):
+            while not stop_flag.is_set():
+                sd.sleep(50)
+                
+                # Add a timeout if speech hasn't started after a while
+                if not started_talking and time.time() - start_time > 6:
+                    console.print("[voice]⏱️ No speech detected, stopping...[/voice]")
+                    break
+    except sd.CallbackStop:
+        pass
+    except Exception as e:
+        console.print(f"[error]Error in audio stream: {e}[/error]")
+
+    if not recorded_chunks or stop_flag.is_set() and not started_talking:
+        console.print("[voice]❌ No speech detected or recording cancelled.[/voice]")
+        return None
+
+    if len(recorded_chunks) > 0:
+        duration = len(recorded_chunks) * chunk_duration
+        
+        console.print(f"[voice]✅ Recording complete ({duration:.1f}s)[/voice]")
+        
+        audio_data = np.concatenate(recorded_chunks, axis=0)
+        
+        with wave.open(filename, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data.tobytes())
+
+        console.print("[voice]📤 Processing speech...[/voice]")
+        with open(filename, 'rb') as f:
+            headers = {
+                'Authorization': WIT_TOKEN,
+                'Content-Type': 'audio/wav'
+            }
+            try:
+                response = requests.post(
+                    'https://api.wit.ai/speech?v=20230202',
+                    headers=headers,
+                    data=f
+                )
+            except Exception as e:
+                console.print(f"[error]Error sending to Wit.ai: {e}[/error]")
+                return None
+
+        try:
+            # Split the response by newlines and parse each line as JSON
+            json_objects = []
+            for line in response.text.strip().split('\r'):
+                line = line.strip()
+                if line:  # Skip empty lines
+                    try:
+                        json_obj = json.loads(line)
+                        json_objects.append(json_obj)
+                    except json.JSONDecodeError:
+                        # Skip invalid JSON
+                        pass
+            
+            # Get the last valid JSON object
+            if json_objects:
+                last_response = json_objects[-1]
+                final_text = last_response.get("text", "")
+                console.print(f"[voice]🗣️ You said: \"{final_text}\"[/voice]")
+                return final_text
+            else:
+                console.print("[error]No valid JSON objects found in response[/error]")
+                return None
+                
+        except Exception as e:
+            console.print(f"[error]Error processing response: {e}[/error]")
+            return None
+    
+    return None
+
+def main():
+    console.clear()
+    console.print(Panel.fit(HEADER_ART, style="bold #9400D3", border_style="border"))
+    
+    # Create a welcome table
+    welcome_table = Table(show_header=False, box=random.choice(BOX_STYLES), border_style="border")
+    welcome_table.add_column("Content", style="subtitle")
+    welcome_table.add_row("🌟 Welcome to the Purple Voice Assistant 🌟")
+    welcome_table.add_row("An advanced AI-powered conversation interface")
+    welcome_table.add_row("✨ Created with love for terminal enthusiasts ✨")
+    
+    console.print(Align.center(welcome_table))
+    console.print()
+    
+    voice_mode = False
+    trigger_mode = False
+    
+    while True:
+        # Create a fancy mode selection menu
+        mode_table = Table(title="Select Your Experience", box=random.choice(BOX_STYLES), border_style="border")
+        mode_table.add_column("Mode", style="highlight")
+        mode_table.add_column("Description", style="info")
+        mode_table.add_row("chat", "Interactive conversation with the AI")
+        mode_table.add_row("debug", "View detailed JSON responses")
+        mode_table.add_row("training", "Raw output for model training")
+        mode_table.add_row("exit", "Exit the application")
+        
+        console.print(Align.center(mode_table))
+        console.print()
+        
+        mode = Prompt.ask("[title]Select mode[/title]", choices=["chat", "debug", "training", "exit"])
+        if mode == 'exit':
+            exit_panel = Panel("✨ Thank you for using Purple Voice Assistant! ✨\n\nSee you next time!", 
+                               border_style="border", 
+                               box=random.choice(BOX_STYLES),
+                               title="Goodbye!",
+                               title_align="center")
+            console.print(Align.center(exit_panel))
+            break
+        
+        # Create a fancy input method selection menu
+        input_table = Table(title="Choose Your Input Method", box=random.choice(BOX_STYLES), border_style="border")
+        input_table.add_column("Method", style="highlight")
+        input_table.add_column("Description", style="info")
+        input_table.add_row("text", "Type your messages using the keyboard")
+        input_table.add_row("voice", "Speak your messages (press Enter to activate)")
+        input_table.add_row("trigger", f"Hands-free mode (say '{VOICE_TRIGGER_PHRASE}' to activate)")
+        
+        console.print(Align.center(input_table))
+        console.print()
+        
+        input_method = Prompt.ask("[title]Input method[/title]", choices=["text", "voice", "trigger"])
+        
+        # Set voice mode based on input method
+        voice_mode = (input_method == "voice" or input_method == "trigger")
+        trigger_mode = (input_method == "trigger")
+        
+        if voice_mode:
+            if trigger_mode:
+                voice_instructions = f"""
+                [info]✨ Trigger Mode Instructions ✨[/info]
+
+                [info]• Say '[highlight]{VOICE_TRIGGER_PHRASE}[/highlight]' to activate voice input[/info]
+                [info]• Recording will automatically stop after silence[/info]
+                [info]• Type 'exit' to quit at any time[/info]
+                [info]• Press Ctrl+C to exit the program[/info]
+                """
+                console.print(Panel(voice_instructions, 
+                                   border_style="border", 
+                                   box=random.choice(BOX_STYLES),
+                                   title="🎙️ Trigger Mode Activated 🎙️",
+                                   title_align="center"))
+            else:
+                voice_instructions = """
+                [info]✨ Voice Mode Instructions ✨[/info]
+
+                [info]• Press Enter to start/stop recording[/info]
+                [info]• Recording will automatically stop after silence[/info]
+                [info]• Type 'exit' to quit at any time[/info]
+                """
+                console.print(Panel(voice_instructions, 
+                                   border_style="border", 
+                                   box=random.choice(BOX_STYLES),
+                                   title="🎙️ Voice Mode Activated 🎙️",
+                                   title_align="center"))
+            
+        # Create a fancy mode info panel
+        mode_info = Panel(f"[title]Operating in [highlight]{mode}[/highlight] mode with [highlight]{input_method}[/highlight] input[/title]", 
+                         border_style="border", 
+                         box=random.choice(BOX_STYLES))
+        console.print(Align.center(mode_info))
+        console.print()
+        
+        # Enhanced progress bar for initialization
+        with Progress(
+            SpinnerColumn(spinner_name=random.choice(SPINNERS)),
+            TextColumn("[progress]{task.description}"),
+            BarColumn(complete_style="progress"),
+            TextColumn("[progress]{task.percentage:>3.0f}%"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("[title]✨ Initializing AI Assistant...[/title]", total=100)
+            model = configure_model(SYSTEMPROMPT)
+            progress.update(task, advance=100)
+            chat = model.start_chat()
+
+        # Display a ready message
+        ready_panel = Panel("✨ AI Assistant is ready for your commands! ✨", 
+                           border_style="border", 
+                           box=random.choice(BOX_STYLES),
+                           title="System Ready",
+                           title_align="center")
+        console.print(Align.center(ready_panel))
+        console.print()
+
+        try:
+            while True:
+                uinput = ""
+                if voice_mode:
+                    if trigger_mode:
+                        # In trigger mode, continuously listen for the trigger phrase
+                        trigger_panel = Panel(
+                            f"[voice]🎧 Listening for trigger phrase '{VOICE_TRIGGER_PHRASE}'...[/voice]\n\n" +
+                            "[info](Type something and press Enter to exit trigger mode)[/info]\n" +
+                            "[info](Press Ctrl+C to exit the program)[/info]",
+                            border_style="border",
+                            box=random.choice(BOX_STYLES),
+                            title="👂 Listening Mode 👂",
+                            title_align="center"
+                        )
+                        console.print(Align.center(trigger_panel))
+                        console.print(Align.center(Text(LISTENING_ART, style="voice")))
+                        
+                        # Create a thread to check for user input to exit
+                        exit_flag = threading.Event()
+                        
+                        def check_for_exit():
+                            nonlocal exit_flag
+                            user_input = input()
+                            if user_input.lower() in ['exit', 'quit', 'bye']:
+                                exit_flag.set()
+                                raise KeyboardInterrupt
+                            else:
+                                exit_flag.set()
+                        
+                        exit_thread = threading.Thread(target=check_for_exit, daemon=True)
+                        exit_thread.start()
+                        
+                        pmessage = ""
+                        # Listen for trigger word until exit_flag is set
+                        while not exit_flag.is_set():
+                            if listen_for_trigger_word():
+                                # Trigger word detected, start recording
+                                detected_panel = Panel(
+                                    "[voice]🎤 Trigger word detected! Listening for command...[/voice]",
+                                    border_style="success",
+                                    box=random.choice(BOX_STYLES),
+                                    title="✅ Activated",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(detected_panel))
+                                
+                                uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                                if uinput:
+                                    break
+                                else:
+                                    no_input_panel = Panel(
+                                        "[voice]No voice input detected after trigger. Listening for trigger again...[/voice]",
+                                        border_style="warning",
+                                        box=random.choice(BOX_STYLES),
+                                        title="⚠️ No Input Detected",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(no_input_panel))
+                        
+                        # If we exited the loop without getting input, check if we should continue
+                        if not uinput:
+                            if exit_flag.is_set():
+                                # User typed something to exit trigger mode
+                                exit_trigger_panel = Panel(
+                                    "[voice]Exited trigger mode.[/voice]",
+                                    border_style="warning",
+                                    box=random.choice(BOX_STYLES),
+                                    title="Mode Change",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(exit_trigger_panel))
+                                continue
+                    else:
+                        # Regular voice mode
+                        voice_prompt_panel = Panel(
+                            "[voice]📝 Ready for input - Press Enter to speak or type your message[/voice]",
+                            border_style="border",
+                            box=random.choice(BOX_STYLES),
+                            title="Voice Input",
+                            title_align="center"
+                        )
+                        console.print(Align.center(voice_prompt_panel))
+                        
+                        # Check if user presses Enter (for voice) or types anything else
+                        user_action = input()
+                        
+                        if not user_action.strip():  # Empty input (Enter pressed)
+                            recording_panel = Panel(
+                                "[voice]🎤 Recording... (will automatically stop after silence)[/voice]",
+                                border_style="highlight",
+                                box=random.choice(BOX_STYLES),
+                                title="Recording",
+                                title_align="center"
+                            )
+                            console.print(Align.center(recording_panel))
+                            
+                            uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                            if not uinput:
+                                no_voice_panel = Panel(
+                                    "[voice]No voice input detected. Please try again.[/voice]",
+                                    border_style="warning",
+                                    box=random.choice(BOX_STYLES),
+                                    title="⚠️ No Input Detected",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(no_voice_panel))
+                                continue
+                        else:
+                            # User typed something instead of using voice
+                            uinput = user_action
+                else:
+                    # Text input mode
+                    uinput = Prompt.ask("[title]>> [/title]")
+                
+                if uinput.lower() in ['exit', 'quit', 'bye']:
+                    raise KeyboardInterrupt
+                    
+                start_time = time.time()
+
+                # Display user input in a fancy panel
+                user_panel = Panel(
+                    f"[user]{uinput}[/user]",
+                    border_style="user",
+                    box=random.choice(BOX_STYLES),
+                    title="You",
+                    title_align="center"
+                )
+                console.print(Align.center(user_panel))
+
+                payload = {
+                    "type": "user",
+                    "user": uinput,
+                    "intents": get_main_intents()
+                }
+                
+                if mode in ["debug", "training"]:
+                    display_json(payload, mode)
+                
+                try:
+                    # Show thinking animation
+                    console.print(Align.center(Text(THINKING_ART, style="highlight")))
+                    thinking_panel = Panel(
+                        "🧠 Processing your request...",
+                        border_style="border",
+                        box=random.choice(BOX_STYLES),
+                        title="AI Thinking",
+                        title_align="center"
+                    )
+                    console.print(Align.center(thinking_panel))
+                    
+                    response = chat.send_message(json.dumps(payload))
+
+                    while True:
+                        try:
+                            res = response.text.strip('```json').strip('\n```').strip()
+                            try:
+                                jres = json.loads(res)
+                                if mode in ["debug", "training"]:
+                                    display_json(jres, mode)
+                            except json.JSONDecodeError:
+                                error_panel = Panel(
+                                    "Error: Invalid JSON response",
+                                    border_style="error",
+                                    box=random.choice(BOX_STYLES),
+                                    title="⚠️ Format Error",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(error_panel))
+                                
+                                payload = {"type": "SYSTEM", "SYSTEM": f"Response format incorrect. Please correct. \n\n{FORMAT_PROMPT}"}
+                                try:
+                                    response = chat.send_message(json.dumps(payload))
+                                except google.api_core.exceptions.ResourceExhausted as e:
+                                    retry_delay = get_retry_delay_from_error(e)
+                                    rate_limit_panel = Panel(
+                                        f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
+                                        border_style="warning",
+                                        box=random.choice(BOX_STYLES),
+                                        title="⚠️ Rate Limit",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(rate_limit_panel))
+                                    break
+                                except Exception as e:
+                                    error_panel = Panel(
+                                        f"Error: {str(e)}",
+                                        border_style="error",
+                                        box=random.choice(BOX_STYLES),
+                                        title="⚠️ Error",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(error_panel))
+                                    break
+                                continue
+
+                            if jres["type"] == 'plan':
+                                plan_panel = Panel(
+                                    "🔍 Planning next steps...",
+                                    border_style="plan",
+                                    box=random.choice(BOX_STYLES),
+                                    title="Planning",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(plan_panel))
+                                
+                                payload = {"type": "SYSTEM", "SYSTEM": "Proceed as strictly per protocol"}
+                                try:
+                                    response = chat.send_message(json.dumps(payload))
+                                except google.api_core.exceptions.ResourceExhausted as e:
+                                    retry_delay = get_retry_delay_from_error(e)
+                                    rate_limit_panel = Panel(
+                                        f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
+                                        border_style="warning",
+                                        box=random.choice(BOX_STYLES),
+                                        title="⚠️ Rate Limit",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(rate_limit_panel))
+                                    break
+                                except Exception as e:
+                                    error_panel = Panel(
+                                        f"Error: {str(e)}",
+                                        border_style="error",
+                                        box=random.choice(BOX_STYLES),
+                                        title="⚠️ Error",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(error_panel))
+                                    break
+
+                            elif jres["type"] == 'action':
+                                fcn, ipt = jres["function"], jres["input"]
+                                
+                                action_panel = Panel(
+                                    f"🔄 Executing action: {fcn}",
+                                    border_style="action",
+                                    box=random.choice(BOX_STYLES),
+                                    title="Action",
+                                    title_align="center"
+                                )
+                                console.print(Align.center(action_panel))
+
+                                if fcn == 'preoutput':
+                                    # Simplified user response prompt
+                                    if voice_mode:
+                                        preoutput_panel = Panel(
+                                            f"[highlight]{ipt['response']}[/highlight]",
+                                            border_style="border",
+                                            box=random.choice(BOX_STYLES),
+                                            title="AI Question",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(preoutput_panel))
+                                        
+                                        # Check if we're in trigger mode
+                                        if trigger_mode:
+                                            trigger_response_panel = Panel(
+                                                "[voice]Say the trigger phrase to respond...[/voice]",
+                                                border_style="border",
+                                                box=random.choice(BOX_STYLES),
+                                                title="Waiting for Trigger",
+                                                title_align="center"
+                                            )
+                                            console.print(Align.center(trigger_response_panel))
+                                            console.print(Align.center(Text(LISTENING_ART, style="voice")))
+                                            
+                                            # Create a thread to check for user input to exit
+                                            preoutput_exit_flag = threading.Event()
+                                            
+                                            def check_for_preoutput_exit():
+                                                nonlocal preoutput_exit_flag
+                                                user_input = input()
+                                                if user_input.lower() in ['exit', 'quit', 'bye']:
+                                                    preoutput_exit_flag.set()
+                                                    raise KeyboardInterrupt
+                                                else:
+                                                    # If user types something, use that as response
+                                                    preoutput_exit_flag.set()
+                                                    return user_input
+                                            
+                                            # Start thread to check for manual input
+                                            preoutput_exit_thread = threading.Thread(target=check_for_preoutput_exit, daemon=True)
+                                            preoutput_exit_thread.start()
+                                            
+                                            pmessage = ""
+                                            # Listen for trigger word until exit_flag is set
+                                            while not preoutput_exit_flag.is_set():
+                                                if listen_for_trigger_word():
+                                                    # Trigger word detected, start recording
+                                                    detected_panel = Panel(
+                                                        "[voice]🎤 Trigger word detected! Listening for response...[/voice]",
+                                                        border_style="success",
+                                                        box=random.choice(BOX_STYLES),
+                                                        title="✅ Activated",
+                                                        title_align="center"
+                                                    )
+                                                    console.print(Align.center(detected_panel))
+                                                    
+                                                    pmessage = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                                                    if pmessage:
+                                                        break
+                                                    else:
+                                                        no_input_panel = Panel(
+                                                            "[voice]No voice input detected after trigger. Listening for trigger again...[/voice]",
+                                                            border_style="warning",
+                                                            box=random.choice(BOX_STYLES),
+                                                            title="⚠️ No Input Detected",
+                                                            title_align="center"
+                                                        )
+                                                        console.print(Align.center(no_input_panel))
+                                            
+                                            # If no voice input and user typed something
+                                            if not pmessage and preoutput_exit_flag.is_set():
+                                                # Get what user typed
+                                                pmessage = Prompt.ask(f'[highlight]Please type your response[/highlight]')
+                                        else:
+                                            # Regular voice mode
+                                            voice_prompt_panel = Panel(
+                                                "[voice]Press Enter to speak your response or type it:[/voice]",
+                                                border_style="border",
+                                                box=random.choice(BOX_STYLES),
+                                                title="Voice Input",
+                                                title_align="center"
+                                            )
+                                            console.print(Align.center(voice_prompt_panel))
+                                            
+                                            user_action = input()
+                                            
+                                            if not user_action.strip():  # Empty input (Enter pressed)
+                                                recording_panel = Panel(
+                                                    "[voice]🎤 Recording... (will automatically stop after silence)[/voice]",
+                                                    border_style="highlight",
+                                                    box=random.choice(BOX_STYLES),
+                                                    title="Recording",
+                                                    title_align="center"
+                                                )
+                                                console.print(Align.center(recording_panel))
+                                                
+                                                pmessage = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
+                                                if not pmessage:
+                                                    no_voice_panel = Panel(
+                                                        "[voice]Voice not detected. Please type response[/voice]",
+                                                        border_style="warning",
+                                                        box=random.choice(BOX_STYLES),
+                                                        title="⚠️ No Input Detected",
+                                                        title_align="center"
+                                                    )
+                                                    console.print(Align.center(no_voice_panel))
+                                                    pmessage = Prompt.ask(f'[highlight]Please type your response[/highlight]')
+                                            else:
+                                                pmessage = user_action
+                                    else:
+                                        pmessage = Prompt.ask(f'[highlight]{ipt["response"]}[/highlight]')
+                                    
+                                    # Display user's response in a fancy panel
+                                    user_response_panel = Panel(
+                                        f"[user]{pmessage}[/user]",
+                                        border_style="user",
+                                        box=random.choice(BOX_STYLES),
+                                        title="Your Response",
+                                        title_align="center"
+                                    )
+                                    console.print(Align.center(user_response_panel))
+                                    
+                                    payload = {
+                                        "type": "preoutput_user_answer",
+                                        "preoutput_user_answer": pmessage
+                                    }
+                                    try:
+                                        # Show thinking animation again
+                                        console.print(Align.center(Text(THINKING_ART, style="highlight")))
+                                        thinking_panel = Panel(
+                                            "🧠 Processing your response...",
+                                            border_style="border",
+                                            box=random.choice(BOX_STYLES),
+                                            title="AI Thinking",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(thinking_panel))
+                                        
+                                        response = chat.send_message(json.dumps(payload))
+                                    except google.api_core.exceptions.ResourceExhausted as e:
+                                        retry_delay = get_retry_delay_from_error(e)
+                                        rate_limit_panel = Panel(
+                                            f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
+                                            border_style="warning",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Rate Limit",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(rate_limit_panel))
+                                        break
+                                    except Exception as e:
+                                        error_panel = Panel(
+                                            f"Error: {str(e)}",
+                                            border_style="error",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Error",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(error_panel))
+                                        break
+
+                                else:
+                                    output = None
+                                    if fcn == 'get_detailed_intents':
+                                        output = get_detailed_intents(ipt)
+                                    elif fcn == 'get_params_and_context':
+                                        output = get_params_and_context({
+                                            "main_intent": ipt["main_intent"],
+                                            "detailed_intent": ipt["detailed_intent"]
+                                        })
+
+                                    observation_payload = {
+                                        "type": "observation",
+                                        "observation": output
+                                    }
+                                    try:
+                                        response = chat.send_message(json.dumps(observation_payload))
+                                    except google.api_core.exceptions.ResourceExhausted as e:
+                                        retry_delay = get_retry_delay_from_error(e)
+                                        rate_limit_panel = Panel(
+                                            f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
+                                            border_style="warning",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Rate Limit",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(rate_limit_panel))
+                                        break
+                                    except Exception as e:
+                                        error_panel = Panel(
+                                            f"Error: {str(e)}",
+                                            border_style="error",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Error",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(error_panel))
+                                        break
+
+                            elif jres["type"] == 'output':
+                                # Show response ASCII art
+                                console.print(Align.center(Text(RESPONSE_ART, style="output")))
+                                
+                                if mode == "chat":
+                                    ai_response_text = (jres.get("response") or 
+                                                  jres.get("output", {}).get("response", 
+                                                  "No response available"))
+                                    try:
+                                        class_name = get_class_name(jres["output"]["main_intent"], jres["output"]["detailed_intent"])
+                                        if class_name is not None:
+                                            response_text = class_name.run(jres["output"]["params"])
+                                    except Exception as e:
+                                        error_panel = Panel(
+                                            f"Error executing command: {str(e)}",
+                                            border_style="error",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Command Error",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(error_panel))
+                                    
+                                    response_panel = Panel(
+                                        str(ai_response_text),
+                                        border_style="output",
+                                        box=random.choice(BOX_STYLES),
+                                        title="✨ AI Response ✨",
+                                        title_align="center",
+                                        padding=(1, 2),
+                                        expand=False  # Allow text to wrap naturally
+                                    )
+                                    console.print(Align.center(response_panel))
+                                else:
+                                    display_json(jres, mode)
+                                    try:
+                                        class_name = get_class_name(jres["output"]["main_intent"], jres["output"]["detailed_intent"])
+                                        if class_name is not None:
+                                            response_text = class_name.run(jres["output"]["params"])
+                                    except Exception as e:
+                                        error_panel = Panel(
+                                            f"Error executing command: {str(e)}",
+                                            border_style="error",
+                                            box=random.choice(BOX_STYLES),
+                                            title="⚠️ Command Error",
+                                            title_align="center"
+                                        )
+                                        console.print(Align.center(error_panel))
+                                break
+                        except Exception as e:
+                            error_panel = Panel(
+                                f"Error processing response: {str(e)}",
+                                border_style="error",
+                                box=random.choice(BOX_STYLES),
+                                title="⚠️ Processing Error",
+                                title_align="center"
+                            )
+                            console.print(Align.center(error_panel))
+                            break
+
+                    if mode != "chat":
+                        time_panel = Panel(
+                            f"Finished in {(time.time() - start_time):.2f}s",
+                            border_style="info",
+                            box=random.choice(BOX_STYLES),
+                            title="Timing",
+                            title_align="center"
+                        )
+                        console.print(Align.center(time_panel))
+                        console.print()
+                except google.api_core.exceptions.ResourceExhausted as e:
+                    retry_delay = get_retry_delay_from_error(e)
+                    rate_limit_panel = Panel(
+                        f"API rate limit exceeded. Please wait {retry_delay} seconds before trying again.",
+                        border_style="warning",
+                        box=random.choice(BOX_STYLES),
+                        title="⚠️ Rate Limit",
+                        title_align="center"
+                    )
+                    console.print(Align.center(rate_limit_panel))
+                except Exception as e:
+                    error_panel = Panel(
+                        f"Error: {str(e)}\n{traceback.format_exc()}",
+                        border_style="error",
+                        box=random.choice(BOX_STYLES),
+                        title="⚠️ System Error",
+                        title_align="center"
+                    )
+                    console.print(Align.center(error_panel))
+
+        except KeyboardInterrupt:
+            console.print("\n")
+            exit_panel = Panel(
+                "\n✨ Closing session. Thank you for using Purple Voice Assistant! ✨\n",
+                border_style="border",
+                box=random.choice(BOX_STYLES),
+                title="Session Ended",
+                title_align="center"
+            )
+            console.print(Align.center(exit_panel))
+            break
+        finally:
+            # Clean up the temp audio file before exiting
+            if os.path.exists(TEMP_AUDIO_FILENAME):
+                try:
+                    os.remove(TEMP_AUDIO_FILENAME)
+                except:
+                    pass
+
+if __name__ == "__main__":
+    main()

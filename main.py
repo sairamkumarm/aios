@@ -81,10 +81,86 @@ def get_retry_delay_from_error(error):
         pass
     return 5
 
+def check_for_user_input():
+    """
+    Non-blocking check for user input to exit trigger word detection.
+    Returns True if user input is detected, False otherwise.
+    """
+    try:
+        import select
+        import sys
+        
+        # Check if there's data available to read from stdin
+        rlist, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(rlist)
+    except Exception as e:
+        console.print(f"[error]Error checking for user input: {e}[/error]")
+        return False
+
+def process_voice_command(audio_data, sample_rate):
+    """
+    Process a voice command and determine if it's an exit command.
+    Returns True if the command is 'exit', False otherwise.
+    """
+    # Save the audio data to a temporary file
+    temp_exit_filename = "temp_exit_check.wav"
+    
+    try:
+        with wave.open(temp_exit_filename, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_data.tobytes())
+            
+        # Send to Wit.ai for processing
+        with open(temp_exit_filename, 'rb') as f:
+            headers = {
+                'Authorization': WIT_TOKEN,
+                'Content-Type': 'audio/wav'
+            }
+            
+            try:
+                response = requests.post(
+                    'https://api.wit.ai/speech',
+                    headers=headers,
+                    data=f
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        # Use response.text instead of direct json() to handle potential JSON parsing issues
+                        result = json.loads(response.text)
+                        if 'text' in result:
+                            text = result['text'].lower()
+                            # Only print detected command if it might be an exit command
+                            if any(word in text for word in ['exit', 'quit', 'bye', 'stop']):
+                                console.print(f"[voice]Detected command: {text}[/voice]")
+                                console.print("[voice]Exit command detected![/voice]")
+                                return True
+                    except json.JSONDecodeError:
+                        # Silently handle JSON parsing errors
+                        pass
+            except Exception:
+                # Silently ignore network or other errors to avoid spamming the console
+                pass
+    except Exception:
+        # Silently ignore file handling errors
+        pass
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_exit_filename):
+            try:
+                os.remove(temp_exit_filename)
+            except:
+                pass
+    
+    return False
+
 def listen_for_trigger_word(max_retries=3, retry_delay=2):
     """
-    Continuously listen for the trigger phrase 'hey assistant' using pvporcupine.
+    Continuously listen for the trigger phrase 'jarvis' using pvporcupine.
     Returns True when the trigger word is detected.
+    Also listens for the exit command "exit" and raises KeyboardInterrupt if detected.
     
     Args:
         max_retries: Maximum number of retries if device error occurs
@@ -98,15 +174,15 @@ def listen_for_trigger_word(max_retries=3, retry_delay=2):
         if use_fallback:
             return listen_for_sound_activity()
             
-        console.print(f"[voice]🎧 Listening for trigger phrase '{VOICE_TRIGGER_PHRASE}'...[/voice]")
+        console.print(f"[voice]🎧 Listening for trigger phrase '{VOICE_TRIGGER_PHRASE}' or say 'exit' to quit...[/voice]")
         
         # Initialize pvporcupine for hotword detection
         porcupine = None
         audio_stream = None
         
         try:
-            # Create a porcupine instance for the 'hey assistant' keyword
-            # Using 'jarvis' as a substitute for demo since 'hey assistant' would need a custom model
+            # Create a porcupine instance for the 'jarvis' keyword
+            # Using 'jarvis' as a substitute for demo since 'jarvis' would need a custom model
             porcupine = pvporcupine.create(
                 keywords=['jarvis'],
                 access_key=os.environ.get('PICO_TOKEN')
@@ -129,7 +205,15 @@ def listen_for_trigger_word(max_retries=3, retry_delay=2):
             
             audio_stream.start()
             
-            console.print(f"[voice]🔊 Say '{VOICE_TRIGGER_PHRASE}' to activate voice mode (Press Ctrl+C to cancel)[/voice]")
+            console.print(f"[voice]🔊 Say '{VOICE_TRIGGER_PHRASE}' to activate voice mode or 'exit' to quit (Press Ctrl+C to cancel)[/voice]")
+            
+            # Buffer to store recent audio for command detection
+            audio_buffer = []
+            max_buffer_size = int(2 * sample_rate / frame_length)  # Store about 2 seconds of audio
+            
+            # Variables to control how often we check for exit commands
+            last_command_check = time.time()
+            command_check_interval = 3  # Check every 3 seconds
             
             # Process audio frames
             while True:
@@ -142,6 +226,11 @@ def listen_for_trigger_word(max_retries=3, retry_delay=2):
                 audio_frame, overflowed = audio_stream.read(frame_length)
                 audio_frame = audio_frame.flatten().astype(np.int16)
                 
+                # Add to buffer for potential command detection
+                audio_buffer.append(audio_frame.copy())
+                if len(audio_buffer) > max_buffer_size:
+                    audio_buffer.pop(0)
+                
                 # Process with porcupine
                 keyword_index = porcupine.process(audio_frame)
                 
@@ -149,10 +238,31 @@ def listen_for_trigger_word(max_retries=3, retry_delay=2):
                 if keyword_index >= 0:
                     console.print("[voice]✅ Trigger phrase detected![/voice]")
                     return True
+                
+                # Check for exit command periodically (not every frame)
+                current_time = time.time()
+                if current_time - last_command_check >= command_check_interval and len(audio_buffer) == max_buffer_size:
+                    last_command_check = current_time
+                    
+                    # Calculate average volume
+                    avg_volume = np.mean([np.abs(frame).mean() for frame in audio_buffer[-10:]])
+                    
+                    # If volume is above threshold, check for exit command
+                    if avg_volume > 300:  # Increased threshold to reduce false positives
+                        # Concatenate buffer for processing
+                        combined_audio = np.concatenate(audio_buffer, axis=0)
+                        
+                        # Check if it's an exit command
+                        if process_voice_command(combined_audio, sample_rate):
+                            console.print("[voice]Exit command detected. Closing application...[/voice]")
+                            raise KeyboardInterrupt
+                        
+                        # Clear buffer after processing
+                        audio_buffer = []
                     
         except KeyboardInterrupt:
             console.print("[voice]🛑 Trigger word detection cancelled[/voice]")
-            return False
+            raise  # Re-raise to propagate to main
         except Exception as e:
             console.print(f"[error]Error in trigger word detection: {e}[/error]")
             retries += 1
