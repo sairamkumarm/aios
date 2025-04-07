@@ -1,3 +1,5 @@
 rich
 python-dotenv
 google-generativeai
+sounddevice
+keyboard
