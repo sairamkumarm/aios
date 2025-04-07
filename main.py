@@ -21,11 +21,9 @@ import uuid
 import threading
 import os
 import signal
-import pvporcupine
 
-WIT_TOKEN = f"Bearer {os.environ.get('WIT_TOKEN')}"
+WIT_TOKEN = "Bearer 5YCZYHOW6DIYF2AQT53XAYVKPT2YIGRZ"
 TEMP_AUDIO_FILENAME = "temp_audio.wav"  # Fixed filename for temp audio
-VOICE_TRIGGER_PHRASE = "hey assistant"  # Voice trigger phrase
 
 custom_theme = Theme({
     "user": "bold cyan",
@@ -81,216 +79,10 @@ def get_retry_delay_from_error(error):
         pass
     return 5
 
-def check_for_user_input():
-    """
-    Non-blocking check for user input to exit trigger word detection.
-    Returns True if user input is detected, False otherwise.
-    """
-    try:
-        import select
-        import sys
-        
-        # Check if there's data available to read from stdin
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        return bool(rlist)
-    except Exception as e:
-        console.print(f"[error]Error checking for user input: {e}[/error]")
-        return False
-
-def process_voice_command(audio_data, sample_rate):
-    """
-    Process a voice command and determine if it's an exit command.
-    Returns True if the command is 'exit', False otherwise.
-    """
-    # Save the audio data to a temporary file
-    temp_exit_filename = "temp_exit_check.wav"
-    
-    try:
-        with wave.open(temp_exit_filename, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(audio_data.tobytes())
-            
-        # Send to Wit.ai for processing
-        with open(temp_exit_filename, 'rb') as f:
-            headers = {
-                'Authorization': WIT_TOKEN,
-                'Content-Type': 'audio/wav'
-            }
-            
-            try:
-                response = requests.post(
-                    'https://api.wit.ai/speech',
-                    headers=headers,
-                    data=f
-                )
-                
-                if response.status_code == 200:
-                    try:
-                        # Use response.text instead of direct json() to handle potential JSON parsing issues
-                        result = json.loads(response.text)
-                        if 'text' in result:
-                            text = result['text'].lower()
-                            # Only print detected command if it might be an exit command
-                            if any(word in text for word in ['exit', 'quit', 'bye', 'stop']):
-                                console.print(f"[voice]Detected command: {text}[/voice]")
-                                console.print("[voice]Exit command detected![/voice]")
-                                return True
-                    except json.JSONDecodeError:
-                        # Silently handle JSON parsing errors
-                        pass
-            except Exception:
-                # Silently ignore network or other errors to avoid spamming the console
-                pass
-    except Exception:
-        # Silently ignore file handling errors
-        pass
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_exit_filename):
-            try:
-                os.remove(temp_exit_filename)
-            except:
-                pass
-    
-    return False
-
-def listen_for_trigger_word(max_retries=3, retry_delay=2):
-    """
-    Continuously listen for the trigger phrase 'jarvis' using pvporcupine.
-    Returns True when the trigger word is detected.
-    Also listens for the exit command "exit" and raises KeyboardInterrupt if detected.
-    
-    Args:
-        max_retries: Maximum number of retries if device error occurs
-        retry_delay: Delay in seconds between retries
-    """
-    # Fallback to simple volume-based detection if we can't use pvporcupine
-    use_fallback = False
-    retries = 0
-    
-    while retries <= max_retries:
-        if use_fallback:
-            return listen_for_sound_activity()
-            
-        console.print(f"[voice]🎧 Listening for trigger phrase '{VOICE_TRIGGER_PHRASE}' or say 'exit' to quit...[/voice]")
-        
-        # Initialize pvporcupine for hotword detection
-        porcupine = None
-        audio_stream = None
-        
-        try:
-            # Create a porcupine instance for the 'jarvis' keyword
-            # Using 'jarvis' as a substitute for demo since 'jarvis' would need a custom model
-            porcupine = pvporcupine.create(
-                keywords=['jarvis'],
-                access_key=os.environ.get('PICO_TOKEN')
-            )
-            
-            # Audio parameters
-            sample_rate = porcupine.sample_rate
-            frame_length = porcupine.frame_length
-            
-            # Setup audio stream with explicit device selection
-            # Try to use default device (device=None)
-            audio_stream = sd.InputStream(
-                samplerate=sample_rate,
-                channels=1,
-                dtype='int16',
-                blocksize=frame_length,
-                callback=None,
-                device=None  # Use default device
-            )
-            
-            audio_stream.start()
-            
-            console.print(f"[voice]🔊 Say '{VOICE_TRIGGER_PHRASE}' to activate voice mode or 'exit' to quit (Press Ctrl+C to cancel)[/voice]")
-            
-            # Buffer to store recent audio for command detection
-            audio_buffer = []
-            max_buffer_size = int(2 * sample_rate / frame_length)  # Store about 2 seconds of audio
-            
-            # Variables to control how often we check for exit commands
-            last_command_check = time.time()
-            command_check_interval = 3  # Check every 3 seconds
-            
-            # Process audio frames
-            while True:
-                # Check for user input to exit (non-blocking)
-                if check_for_user_input():
-                    console.print("[voice]Exiting trigger mode due to user input[/voice]")
-                    return False
-                    
-                # Read audio frame
-                audio_frame, overflowed = audio_stream.read(frame_length)
-                audio_frame = audio_frame.flatten().astype(np.int16)
-                
-                # Add to buffer for potential command detection
-                audio_buffer.append(audio_frame.copy())
-                if len(audio_buffer) > max_buffer_size:
-                    audio_buffer.pop(0)
-                
-                # Process with porcupine
-                keyword_index = porcupine.process(audio_frame)
-                
-                # If keyword detected
-                if keyword_index >= 0:
-                    console.print("[voice]✅ Trigger phrase detected![/voice]")
-                    return True
-                
-                # Check for exit command periodically (not every frame)
-                current_time = time.time()
-                if current_time - last_command_check >= command_check_interval and len(audio_buffer) == max_buffer_size:
-                    last_command_check = current_time
-                    
-                    # Calculate average volume
-                    avg_volume = np.mean([np.abs(frame).mean() for frame in audio_buffer[-10:]])
-                    
-                    # If volume is above threshold, check for exit command
-                    if avg_volume > 300:  # Increased threshold to reduce false positives
-                        # Concatenate buffer for processing
-                        combined_audio = np.concatenate(audio_buffer, axis=0)
-                        
-                        # Check if it's an exit command
-                        if process_voice_command(combined_audio, sample_rate):
-                            console.print("[voice]Exit command detected. Closing application...[/voice]")
-                            raise KeyboardInterrupt
-                        
-                        # Clear buffer after processing
-                        audio_buffer = []
-                    
-        except KeyboardInterrupt:
-            console.print("[voice]🛑 Trigger word detection cancelled[/voice]")
-            raise  # Re-raise to propagate to main
-        except Exception as e:
-            console.print(f"[error]Error in trigger word detection: {e}[/error]")
-            retries += 1
-            
-            if retries > max_retries:
-                console.print("[warning]Maximum retries exceeded. Switching to fallback detection method.[/warning]")
-                use_fallback = True
-            else:
-                console.print(f"[warning]Retrying in {retry_delay} seconds... (Attempt {retries}/{max_retries})[/warning]")
-                time.sleep(retry_delay)
-        finally:
-            # Clean up resources
-            try:
-                if audio_stream is not None:
-                    audio_stream.stop()
-                if porcupine is not None:
-                    porcupine.delete()
-            except Exception as cleanup_error:
-                console.print(f"[error]Error during cleanup: {cleanup_error}[/error]")
-    
-    return False
-
-def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_record_seconds=10):
+def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5):
     sample_rate = 16000
     blocksize = 512
     chunk_duration = blocksize / sample_rate
-    max_chunks = int(max_record_seconds / chunk_duration)
-    silence_limit = int(silence_duration / chunk_duration)
     filename = TEMP_AUDIO_FILENAME  # Use the fixed filename
 
     # Clean up any existing temp file
@@ -303,90 +95,46 @@ def listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5, max_reco
     console.print("[voice]🎤 Recording... (Press Enter to stop)[/voice]")
     
     recorded_chunks = []
-    silence_chunks = 0
-    started_talking = False
     stop_flag = threading.Event()
     
-    recording_start_time = None
-    last_ui_update = 0
-
     def callback(indata, frames, time_info, status):
-        nonlocal recorded_chunks, silence_chunks, started_talking, recording_start_time, last_ui_update
-        current_time = time.time()
-
+        nonlocal recorded_chunks
+        
         if stop_flag.is_set():
             raise sd.CallbackStop
 
-        volume = np.abs(indata).mean() * 1000
-
-        if volume > silence_threshold:
-            if not started_talking:
-                console.print("[voice]🎙️ Speech detected[/voice]", end="\r")
-                recording_start_time = current_time
-                last_ui_update = current_time
-            started_talking = True
-            silence_chunks = 0
-            recorded_chunks.append(indata.copy())
-        elif started_talking:
-            silence_chunks += 1
-            recorded_chunks.append(indata.copy())
-            
-            # Show auto-stop countdown only when silence is detected
-            if current_time - last_ui_update >= 0.25 and silence_chunks < silence_limit:
-                last_ui_update = current_time
-                remaining = (silence_limit - silence_chunks) * chunk_duration
-                console.print(f"[voice]🎤 Recording... Auto-stop in {remaining:.1f}s (Press Enter to stop manually)[/voice]", end="\r")
-
-        # Stop if silence threshold is reached after speech was detected
-        if started_talking and silence_chunks >= silence_limit:
-            console.print("[voice]🔇 Silence detected, stopping...[/voice]")
-            stop_flag.set()
-            raise sd.CallbackStop
-            
-        # Also stop if we've recorded for too long
-        if len(recorded_chunks) >= max_chunks:
-            console.print("[voice]⏱️ Maximum duration reached[/voice]")
-            stop_flag.set()
-            raise sd.CallbackStop
+        # Record all audio regardless of volume
+        recorded_chunks.append(indata.copy())
+        
+        # Update recording duration occasionally
+        if len(recorded_chunks) % 20 == 0:  # Update roughly every second
+            duration = len(recorded_chunks) * chunk_duration
+            console.print(f"[voice]🎤 Recording... ({duration:.1f}s) Press Enter to stop[/voice]", end="\r")
 
     def check_for_enter():
-        # Use signal based approach instead of keyboard library
-        while not stop_flag.is_set():
-            # Check if enter was pressed using a simple input with timeout
-            try:
-                # We're using a hacky solution with os.read and select for non-blocking input
-                import select
-                rlist, _, _ = select.select([0], [], [], 0.1)  # 0 is stdin
-                if rlist:
-                    key = os.read(0, 1024).decode().strip()
-                    if key:  # If Enter was pressed
-                        console.print("[voice]🛑 Recording stopped by user[/voice]")
-                        stop_flag.set()
-                        break
-            except Exception:
-                time.sleep(0.1)  # Fall back to simple sleep if the above fails
+        try:
+            print("")  # Add a line for input to appear on
+            input()
+            console.print("[voice]🛑 Recording stopped by user[/voice]")
+            stop_flag.set()
+        except Exception as e:
+            console.print(f"[error]Error in input thread: {e}[/error]")
 
     enter_thread = threading.Thread(target=check_for_enter, daemon=True)
     enter_thread.start()
 
-    start_time = time.time()
     try:
         with sd.InputStream(callback=callback, channels=1, samplerate=sample_rate, 
                            dtype='int16', blocksize=blocksize):
             while not stop_flag.is_set():
-                sd.sleep(50)
-                
-                # Add a timeout if speech hasn't started after a while
-                if not started_talking and time.time() - start_time > 6:
-                    console.print("[voice]⏱️ No speech detected, stopping...[/voice]")
-                    break
+                sd.sleep(100)  # Check more frequently
     except sd.CallbackStop:
         pass
     except Exception as e:
         console.print(f"[error]Error in audio stream: {e}[/error]")
 
-    if not recorded_chunks or stop_flag.is_set() and not started_talking:
-        console.print("[voice]❌ No speech detected or recording cancelled.[/voice]")
+    if not recorded_chunks:
+        console.print("[voice]❌ No recording data or recording cancelled.[/voice]")
         return None
 
     if len(recorded_chunks) > 0:
@@ -452,7 +200,6 @@ def main():
     console.print(Panel.fit("🎙️ Voice-Enabled AI Chat Interface", style="bold cyan"))
     
     voice_mode = False
-    trigger_mode = False
     
     while True:
         mode = Prompt.ask("Select mode", choices=["chat", "debug", "training", "exit"])
@@ -460,29 +207,17 @@ def main():
             console.print(Panel("\nGoodbye!\n", border_style="yellow"))
             break
         
-        input_method = Prompt.ask("Input method", choices=["text", "voice", "trigger"])
-        
-        # Set voice mode based on input method
-        voice_mode = (input_method == "voice" or input_method == "trigger")
-        trigger_mode = (input_method == "trigger")
+        input_method = Prompt.ask("Input method", choices=["text", "voice"])
+        voice_mode = (input_method == "voice")
         
         if voice_mode:
-            if trigger_mode:
-                voice_instructions = f"""
-                [info]Trigger mode instructions:[/info]
-                [info]- Say '{VOICE_TRIGGER_PHRASE}' to activate voice input[/info]
-                [info]- Recording will automatically stop after silence[/info]
-                [info]- Type 'exit' to quit at any time[/info]
-                """
-                console.print(Panel(voice_instructions, border_style="cyan", title="Trigger Mode"))
-            else:
-                voice_instructions = """
-                [info]Voice mode instructions:[/info]
-                [info]- Press Enter to start/stop recording[/info]
-                [info]- Recording will automatically stop after silence[/info]
-                [info]- Type 'exit' to quit at any time[/info]
-                """
-                console.print(Panel(voice_instructions, border_style="cyan", title="Voice Mode"))
+            voice_instructions = """
+            [info]Voice mode instructions:[/info]
+            [info]- Press Enter to start/stop recording[/info]
+            [info]- Recording will automatically stop after silence[/info]
+            [info]- Type 'exit' to quit at any time[/info]
+            """
+            console.print(Panel(voice_instructions, border_style="cyan", title="Voice Mode"))
             
         console.print(f"Operating in {mode} mode with {input_method} input\n")
         
@@ -496,60 +231,20 @@ def main():
             while True:
                 uinput = ""
                 if voice_mode:
-                    if trigger_mode:
-                        # In trigger mode, continuously listen for the trigger phrase
-                        console.print("[voice]🎧 Listening for trigger phrase. Say 'exit' to quit.[/voice]")
-                        
-                        # Allow user to type 'exit' to quit trigger mode
-                        console.print("[info](Type something and press Enter to exit trigger mode)[/info]")
-                        
-                        # Create a thread to check for user input to exit
-                        exit_flag = threading.Event()
-                        
-                        def check_for_exit():
-                            nonlocal exit_flag
-                            user_input = input()
-                            if user_input.lower() in ['exit', 'quit', 'bye']:
-                                exit_flag.set()
-                                raise KeyboardInterrupt
-                            else:
-                                exit_flag.set()
-                        
-                        exit_thread = threading.Thread(target=check_for_exit, daemon=True)
-                        exit_thread.start()
-                        
-                        # Listen for trigger word until exit_flag is set
-                        while not exit_flag.is_set():
-                            if listen_for_trigger_word():
-                                # Trigger word detected, start recording
-                                console.print("[voice]🎤 Trigger word detected! Listening for command...[/voice]")
-                                uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
-                                if uinput:
-                                    break
-                                else:
-                                    console.print("[voice]No voice input detected after trigger. Listening for trigger again...[/voice]")
-                        
-                        # If we exited the loop without getting input, check if we should continue
+                    # Simple prompt to indicate readiness
+                    console.print("[voice]📝 Ready for input - Press Enter to speak or type your message[/voice]")
+                    
+                    # Check if user presses Enter (for voice) or types anything else
+                    user_action = input()
+                    
+                    if not user_action.strip():  # Empty input (Enter pressed)
+                        uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
                         if not uinput:
-                            if exit_flag.is_set():
-                                # User typed something to exit trigger mode
-                                console.print("[voice]Exited trigger mode.[/voice]")
-                                continue
+                            console.print("[voice]No voice input detected. Please try again.[/voice]")
+                            continue
                     else:
-                        # Regular voice mode
-                        console.print("[voice]📝 Ready for input - Press Enter to speak or type your message[/voice]")
-                        
-                        # Check if user presses Enter (for voice) or types anything else
-                        user_action = input()
-                        
-                        if not user_action.strip():  # Empty input (Enter pressed)
-                            uinput = listen_and_send_to_wit(silence_threshold=250, silence_duration=0.5)
-                            if not uinput:
-                                console.print("[voice]No voice input detected. Please try again.[/voice]")
-                                continue
-                        else:
-                            # User typed something instead of using voice
-                            uinput = user_action
+                        # User typed something instead of using voice
+                        uinput = user_action
                 else:
                     uinput = Prompt.ask(">> ")
                 
