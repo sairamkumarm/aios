@@ -20,4 +20,13 @@
 `sudo apt install portaudio19-dev`
 
 ### Script init
-Install and chmod the scipts in the scripts directory, make sure they are available on the path.
+Install and chmod the scripts in the scripts directory, make sure they are available on the path.
+
+### Install dependencies
+Install using requirements.txt
+
+### Update ENV
+set the paths of the scripts, and the API keys in the ENV file
+
+### Running
+`python main.py`
