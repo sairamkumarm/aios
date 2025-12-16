@@ -18,3 +18,6 @@
 
 ### Audio Service (Note: Install before pyaudio)
 `sudo apt install portaudio19-dev`
+
+### Script init
+Install and chmod the scipts in the scripts directory, make sure they are available on the path.
